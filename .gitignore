@@ -1,5 +1,6 @@
 # dependencies (bun install)
 node_modules
+.dev-tools
 
 *.mid
 *.diff
@@ -19,6 +20,7 @@ coverage
 
 # logs
 logs
+*.log
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
