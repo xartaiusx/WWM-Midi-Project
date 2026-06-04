@@ -216,6 +216,7 @@
   import SettingsView from "./lib/components/SettingsView.svelte";
   import StatsView from "./lib/components/StatsView.svelte";
   import LivePlayView from "./lib/components/LivePlayView.svelte";
+  import AudioMidiCreator from "./lib/components/AudioMidiCreator.svelte";
   import Visualizer from "./lib/components/Visualizer.svelte";
   import BandMode from "./lib/components/BandMode.svelte";
   import LibraryShare from "./lib/components/LibraryShare.svelte";
@@ -252,6 +253,7 @@
     isPlaying,
     isPaused,
     pauseResume,
+    pausePlayback,
     stopPlayback,
     playNext,
     playPrevious,
@@ -380,6 +382,7 @@
 
   $: musicNavItems = [
     { id: "library", icon: "mdi:library-music", label: $t("nav.library"), badge: 0 },
+    { id: "creator", icon: "mdi:waveform", label: "Create", badge: 0 },
     { id: "queue", icon: "mdi:playlist-play", label: $t("nav.queue"), badge: queueCount },
     { id: "favorites", icon: "mdi:heart", label: $t("nav.favorites"), badge: favoritesCount },
     { id: "playlists", icon: "mdi:folder-music", label: $t("nav.playlists"), badge: playlistsCount },
@@ -435,6 +438,19 @@
       sidebarTab = "online";
     }
     prevBandSelectMode = $bandSongSelectMode;
+  }
+
+  let chatPausePending = false;
+
+  async function pauseForGameChat() {
+    if (chatPausePending || !$smartPause || !$isPlaying || $isPaused) return;
+
+    chatPausePending = true;
+    try {
+      await pausePlayback();
+    } finally {
+      chatPausePending = false;
+    }
   }
 
   onMount(async () => {
@@ -516,9 +532,11 @@
           break;
       }
     });
+    const unlistenChatOpened = await listen("game-chat-opened", pauseForGameChat);
 
     return () => {
       unlisten();
+      unlistenChatOpened();
       window.removeEventListener('open-update-modal', handleOpenUpdateModal);
       window.removeEventListener('keybindings-changed', handleKeybindingsChanged);
     };
@@ -809,6 +827,8 @@
                 >
                   {#if activeView === "library"}
                     <MidiFileList />
+                  {:else if activeView === "creator"}
+                    <AudioMidiCreator />
                   {:else if activeView === "queue"}
                     <PlaylistManager />
                   {:else if activeView === "favorites"}
@@ -918,7 +938,7 @@
                   <span>{$speed}x</span>
                 </button>
                 {#if showSpeedMenu}
-                  <button class="fixed inset-0 z-40" onclick={() => showSpeedMenu = false}></button>
+                  <button class="fixed inset-0 z-40" onclick={() => showSpeedMenu = false} aria-label="Close speed menu"></button>
                   <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-[#282828] rounded-lg shadow-xl border border-white/10 overflow-hidden z-50 min-w-[90px]" in:fly={{ y: 5, duration: 150 }} out:fade={{ duration: 100 }}>
                     {#each speedOptions as option}
                       <button class="w-full px-3 py-1.5 text-xs text-left transition-colors {$speed === option.value ? 'bg-[#1db954]/20 text-[#1db954]' : 'text-white/70 hover:bg-white/5'}" onclick={() => selectSpeed(option.value)}>{option.label}</button>
@@ -959,7 +979,7 @@
                   <span>{noteModeOptions.find(m => m.id === $noteMode)?.short || "CLS"}</span>
                 </button>
                 {#if showModeMenu}
-                  <button class="fixed inset-0 z-40" onclick={() => showModeMenu = false}></button>
+                  <button class="fixed inset-0 z-40" onclick={() => showModeMenu = false} aria-label="Close note mode menu"></button>
                   <div
                     class="absolute bottom-full right-0 mb-2 bg-[#282828] rounded-lg shadow-xl border border-white/10 overflow-hidden z-50 min-w-[200px]"
                     in:fly={{ y: 10, duration: 150 }}
@@ -1009,7 +1029,7 @@
                     </span>
                   </button>
                   {#if showTrackMenu}
-                    <button class="fixed inset-0 z-40" onclick={() => showTrackMenu = false}></button>
+                    <button class="fixed inset-0 z-40" onclick={() => showTrackMenu = false} aria-label="Close track menu"></button>
                     <div
                       class="absolute bottom-full right-0 mb-2 bg-[#282828] rounded-lg shadow-xl border border-white/10 overflow-hidden z-50 min-w-[180px] max-w-[250px] max-h-[300px] overflow-y-auto scrollbar-thin"
                       in:fly={{ y: 10, duration: 150 }}
@@ -1086,7 +1106,7 @@
                   <Icon icon={$currentLanguageInfo?.flag || 'circle-flags:us'} class="w-4 h-4" />
                 </button>
                 {#if showLanguageMenu}
-                  <button class="fixed inset-0 z-40" onclick={() => showLanguageMenu = false}></button>
+                  <button class="fixed inset-0 z-40" onclick={() => showLanguageMenu = false} aria-label="Close language menu"></button>
                   <div
                     class="absolute bottom-full right-0 mb-2 bg-[#282828] rounded-lg shadow-xl border border-white/10 overflow-hidden z-50 min-w-[140px]"
                     in:fly={{ y: 10, duration: 150 }}
@@ -1142,6 +1162,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => { if (updateStatus === 'idle' || updateStatus === 'downloaded' || updateStatus === 'error') showUpdateModal = false; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <!-- Modal -->
@@ -1347,7 +1368,7 @@
     class="fixed inset-0 z-50 flex items-center justify-center"
     transition:fade={{ duration: 150 }}
   >
-    <button class="absolute inset-0 bg-black/60" onclick={() => showCloseConfirmModal = false}></button>
+    <button class="absolute inset-0 bg-black/60" onclick={() => showCloseConfirmModal = false} aria-label={$t("common.close")}></button>
 
     <div
       class="relative bg-[#282828] rounded-xl shadow-2xl w-[350px] max-w-[90vw] overflow-hidden"

@@ -513,8 +513,18 @@
       if (!selectedFiles.has(file.hash)) {
         clearSelection();
       }
+      lastClickedIndex = index;
+      return;
     }
+
     lastClickedIndex = index;
+    handlePlay(file);
+  }
+
+  function handleFileKeydown(event, file, index) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleFileClick(event, file, index);
   }
 
   function clearSelection() {
@@ -762,6 +772,7 @@
               class="absolute right-0 top-full mt-1 w-48 bg-[#282828] rounded-lg shadow-xl border border-white/10 py-1 z-50"
               transition:fly={{ y: -5, duration: 150 }}
               onclick={(e) => e.stopPropagation()}
+              role="presentation"
             >
               <!-- Create New Playlist -->
               <button
@@ -823,8 +834,12 @@
             : 'hover:bg-white/5'} {invalid ? 'opacity-60' : ''}"
         style="height: {ITEM_HEIGHT}px; margin-bottom: 2px;"
         title={invalid ? $t("library.invalidFile") : $t("library.selectHint")}
+        role="button"
+        tabindex={invalid ? -1 : 0}
+        aria-disabled={invalid}
         oncontextmenu={(e) => handleContextMenu(e, file)}
         onclick={(e) => handleFileClick(e, file, index)}
+        onkeydown={(e) => handleFileKeydown(e, file, index)}
       >
         <!-- Number / Checkbox / Play Button / Playing Indicator -->
         <div class="w-8 flex items-center justify-center flex-shrink-0">
@@ -884,25 +899,6 @@
         <!-- Song Info -->
         <div
           class="flex-1 min-w-0 {invalid ? 'cursor-not-allowed' : ''}"
-          role={invalid ? undefined : "button"}
-          tabindex={invalid ? undefined : 0}
-          onclick={(e) => {
-            if (invalid) return;
-            // Don't play if Ctrl/Shift held (selection mode) or if selection exists
-            if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-            if (selectedFiles.size > 0 && !isSelected) return;
-            if (selectedFiles.size === 0) {
-              handlePlay(file);
-            }
-          }}
-          onkeydown={(event) => {
-            if (!invalid && (event.key === "Enter" || event.key === " ")) {
-              event.preventDefault();
-              if (selectedFiles.size === 0) {
-                handlePlay(file);
-              }
-            }
-          }}
         >
           <p
             class="text-sm font-medium truncate transition-colors {invalid
@@ -1134,6 +1130,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => { showImportModal = false; urlInput = ""; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <!-- Modal -->
@@ -1214,9 +1211,10 @@
 
         <!-- URL Input -->
         <div>
-          <label class="block text-sm font-medium text-white/70 mb-2">{$t("modals.import.pasteUrl")}</label>
+          <label class="block text-sm font-medium text-white/70 mb-2" for="import-url-input">{$t("modals.import.pasteUrl")}</label>
           <div class="flex gap-2">
             <input
+              id="import-url-input"
               type="text"
               bind:value={urlInput}
               placeholder={$t("modals.import.urlPlaceholder")}
@@ -1253,6 +1251,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={skipPlaylistPrompt}
+      aria-label={$t("common.close")}
     ></button>
 
     <div
@@ -1304,6 +1303,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => { showCreatePlaylistModal = false; createPlaylistName = ""; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <div

@@ -237,6 +237,12 @@ impl AppState {
         }
     }
 
+    pub fn pause_playback(&mut self) {
+        if self.is_playing.load(Ordering::SeqCst) {
+            self.is_paused.store(true, Ordering::SeqCst);
+        }
+    }
+
     pub fn stop_playback(&mut self) {
         self.is_playing.store(false, Ordering::SeqCst);
         self.is_paused.store(false, Ordering::SeqCst);

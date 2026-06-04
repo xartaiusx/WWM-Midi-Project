@@ -240,7 +240,7 @@
         </button>
 
         {#if showDeviceMenu}
-          <button class="fixed inset-0 z-40" onclick={() => showDeviceMenu = false}></button>
+          <button class="fixed inset-0 z-40" onclick={() => showDeviceMenu = false} aria-label="Close MIDI device menu"></button>
           <div
             class="absolute top-full left-0 right-0 mt-1 bg-[#282828] rounded-lg shadow-xl border border-white/10 overflow-hidden z-50 max-h-60 overflow-y-auto"
             in:fly={{ y: -10, duration: 150 }}

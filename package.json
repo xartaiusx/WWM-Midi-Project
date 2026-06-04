@@ -1,6 +1,6 @@
 {
   "name": "wwm-overlay",
-  "version": "1.0.8",
+  "version": "1.1.9",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -12,6 +12,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "coverage:check": "node scripts/check-coverage.js",
+    "audio-midi": "node tools/audio-to-wwm-midi/wwm_audio_to_midi.mjs",
+    "audio-midi:status": "node tools/audio-to-wwm-midi/wwm_audio_to_midi.mjs status",
     "postinstall": "npm run build",
     "tauri": "tauri",
     "pretauri-dev": "npm run build",
@@ -26,17 +28,24 @@
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/svelte": "^5.2.9",
     "@types/bun": "latest",
-    "@vitest/coverage-v8": "^1.6.1",
+    "@vitest/coverage-v8": "^4.1.8",
     "autoprefixer": "^10.4.22",
     "jsdom": "^27.3.0",
+    "midi-file": "^1.2.4",
+    "midi-writer-js": "^3.2.1",
     "postcss": "^8.5.6",
     "svelte": "^5.43.14",
     "tailwindcss": "^3.4.14",
     "vite": "^7.2.4",
-    "vitest": "^1.6.1"
+    "vitest": "^4.1.8"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "overrides": {
+    "svelte-i18n": {
+      "esbuild": "^0.27.7"
+    }
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

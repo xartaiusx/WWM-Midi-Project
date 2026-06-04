@@ -29,10 +29,14 @@ import {
   addToSavedPlaylist,
   clearAllFavorites,
   createPlaylist,
+  currentPosition,
   deletePlaylist,
   favorites,
   incrementSession,
+  isPaused,
+  isPlaying,
   isFavorite,
+  pausePlayback,
   reorderPlaylists,
   reorderSavedPlaylist,
   removeDeletedFile,
@@ -68,6 +72,9 @@ describe('player store helpers', () => {
     favorites.set([])
     savedPlaylists.set([])
     shuffleMode.set(false)
+    isPlaying.set(false)
+    isPaused.set(false)
+    currentPosition.set(0)
     invoke.mockReset()
   })
 
@@ -98,6 +105,22 @@ describe('player store helpers', () => {
     expect(get(shuffleMode)).toBe(true)
     toggleShuffle()
     expect(get(shuffleMode)).toBe(false)
+  })
+
+  it('pauses playback with an idempotent backend command', async () => {
+    invoke.mockResolvedValueOnce({
+      is_playing: true,
+      is_paused: true,
+      current_position: 12.5,
+      total_duration: 120,
+    })
+
+    await pausePlayback()
+
+    expect(invoke).toHaveBeenCalledWith('pause_playback')
+    expect(get(isPlaying)).toBe(true)
+    expect(get(isPaused)).toBe(true)
+    expect(get(currentPosition)).toBe(12.5)
   })
 
   it('adds and removes favorites', () => {

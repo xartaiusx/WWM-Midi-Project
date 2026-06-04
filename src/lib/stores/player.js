@@ -925,6 +925,18 @@ export async function pauseResume() {
   }
 }
 
+export async function pausePlayback() {
+  try {
+    const state = await invoke('pause_playback');
+    isPaused.set(state.is_paused);
+    isPlaying.set(state.is_playing);
+    currentPosition.set(state.current_position);
+    totalDuration.set(state.total_duration);
+  } catch (error) {
+    console.error('Failed to pause playback:', error);
+  }
+}
+
 // Stop playback
 export async function stopPlayback() {
   try {

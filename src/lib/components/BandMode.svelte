@@ -220,8 +220,9 @@
       <div class="space-y-3" in:fade>
         <!-- Player Name -->
         <div>
-          <label class="block text-xs text-white/50 mb-1">{$t("band.yourName")}</label>
+          <label class="block text-xs text-white/50 mb-1" for="band-player-name">{$t("band.yourName")}</label>
           <input
+            id="band-player-name"
             type="text"
             bind:value={playerName}
             placeholder={$t("band.enterName")}
@@ -233,7 +234,7 @@
 
         <!-- Create Room -->
         <div>
-          <label class="block text-xs text-white/50 mb-1">{$t("band.hostSession")}</label>
+          <p class="block text-xs text-white/50 mb-1">{$t("band.hostSession")}</p>
           <button
             class="w-full py-2 rounded-lg bg-[#1db954] hover:bg-[#1ed760] text-white font-medium text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             onclick={handleCreateRoom}
@@ -250,9 +251,10 @@
 
         <!-- Join Room -->
         <div>
-          <label class="block text-xs text-white/50 mb-1">{$t("band.joinSession")}</label>
+          <label class="block text-xs text-white/50 mb-1" for="band-join-code">{$t("band.joinSession")}</label>
           <div class="flex gap-2">
             <input
+              id="band-join-code"
               type="text"
               bind:value={joinCode}
               placeholder="CODE"
@@ -286,6 +288,7 @@
           <button
             class="relative w-9 h-5 rounded-full transition-colors duration-200 {$useTurnServer ? 'bg-[#1db954]' : 'bg-white/20'}"
             onclick={() => useTurnServer.update(v => !v)}
+            aria-label={$t("band.useRelay")}
           >
             <div
               class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 {$useTurnServer ? 'translate-x-4' : 'translate-x-0.5'}"
@@ -741,6 +744,7 @@
             <button
               class="w-8 h-4 rounded-full transition-colors {$autoReady ? 'bg-[#1db954]' : 'bg-white/20'}"
               onclick={() => autoReady.update(v => !v)}
+              aria-label={$t("band.autoReady")}
             >
               <div class="w-3 h-3 rounded-full bg-white transition-transform {$autoReady ? 'translate-x-4' : 'translate-x-0.5'}"></div>
             </button>

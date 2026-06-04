@@ -292,31 +292,16 @@
 
   async function checkForUpdates() {
     try {
-      const response = await fetch('https://api.github.com/repos/SnowiyQ/Where-Winds-Meet-Midi-Player/releases/latest');
-      if (!response.ok) return;
-      const data = await response.json();
-      const latestVersion = data.tag_name?.replace(/^v/, '') || '';
-      if (latestVersion && compareVersions(latestVersion, APP_VERSION) > 0) {
+      const result = await invoke('check_for_update', { currentVersion: APP_VERSION });
+      if (result) {
         updateAvailable = {
-          version: latestVersion,
-          url: data.html_url
+          version: result.version,
+          url: result.release_url
         };
       }
     } catch (e) {
       console.log('Update check failed:', e);
     }
-  }
-
-  function compareVersions(a, b) {
-    const partsA = a.split('.').map(Number);
-    const partsB = b.split('.').map(Number);
-    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-      const numA = partsA[i] || 0;
-      const numB = partsB[i] || 0;
-      if (numA > numB) return 1;
-      if (numA < numB) return -1;
-    }
-    return 0;
   }
 
   async function toggleCloudMode() {
@@ -833,8 +818,9 @@
           </div>
           <div class="grid grid-cols-3 gap-2 mb-3">
             <div>
-              <label class="text-xs text-white/60">Key</label>
+              <label class="text-xs text-white/60" for="spam-key">Key</label>
               <select
+                id="spam-key"
                 bind:value={spamKey}
                 class="w-full mt-1 px-2 py-1 bg-white/10 rounded text-sm"
               >
@@ -845,8 +831,9 @@
               </select>
             </div>
             <div>
-              <label class="text-xs text-white/60">Count</label>
+              <label class="text-xs text-white/60" for="spam-count">Count</label>
               <input
+                id="spam-count"
                 type="number"
                 bind:value={spamCount}
                 min="1"
@@ -855,8 +842,9 @@
               />
             </div>
             <div>
-              <label class="text-xs text-white/60">Delay (ms)</label>
+              <label class="text-xs text-white/60" for="spam-delay">Delay (ms)</label>
               <input
+                id="spam-delay"
                 type="number"
                 bind:value={spamDelay}
                 min="0"
@@ -867,8 +855,9 @@
           </div>
           <div class="grid grid-cols-4 gap-2 mb-2">
             <div>
-              <label class="text-xs text-white/60">Chord</label>
+              <label class="text-xs text-white/60" for="spam-chord-size">Chord</label>
               <input
+                id="spam-chord-size"
                 type="number"
                 bind:value={chordSize}
                 min="2"
@@ -1047,6 +1036,7 @@
             ? 'bg-[#1db954]'
             : 'bg-white/20'}"
           onclick={toggleSmartPause}
+          aria-label={$t("settings.playback.smartPause")}
         >
           <div
             class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 {$smartPause
@@ -1074,6 +1064,7 @@
             ? 'bg-orange-500'
             : 'bg-white/20'}"
           onclick={toggleCloudMode}
+          aria-label={$t("settings.playback.cloudMode")}
         >
           <div
             class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 {cloudMode
@@ -1176,11 +1167,13 @@
   <div
     class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center"
     onclick={cancelPreset}
+    role="presentation"
     in:fade={{ duration: 150 }}
   >
     <div
       class="bg-[#282828] rounded-xl p-6 max-w-md mx-4 shadow-2xl border border-white/10"
       onclick={(e) => e.stopPropagation()}
+      role="presentation"
       in:fly={{ y: 20, duration: 200 }}
     >
       <div class="flex items-center gap-3 mb-4">

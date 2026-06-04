@@ -39,6 +39,7 @@
         onclick={() => (searchQuery = "")}
         class="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition-colors"
         transition:fade={{ duration: 150 }}
+        title="Clear search"
       >
         <Icon icon="mdi:close-circle" class="w-5 h-5" />
       </button>
@@ -64,6 +65,7 @@
           class="absolute right-0 top-full mt-1 w-36 bg-[#282828] rounded-lg shadow-xl border border-white/10 py-1 z-50"
           transition:fly={{ y: -5, duration: 150 }}
           onclick={(e) => e.stopPropagation()}
+          role="presentation"
         >
           {#each sortOptions as option}
             <button

@@ -77,6 +77,10 @@
     checkScrollMask();
   });
 
+  function autofocus(node) {
+    setTimeout(() => node.focus(), 0);
+  }
+
   // Re-check scroll mask when switching views
   $: if (selectedPlaylistId !== undefined) {
     checkScrollMask();
@@ -325,16 +329,16 @@
               class="bg-white/10 border border-white/20 rounded px-2 py-0.5 text-base font-bold w-full"
               onblur={saveEdit}
               onkeydown={(e) => e.key === "Enter" && saveEdit()}
-              autofocus
+              use:autofocus
             />
           {:else}
-            <h2
-              class="text-lg font-bold truncate cursor-pointer hover:text-[#1db954] transition-colors"
+            <button
+              class="block w-full text-left text-lg font-bold truncate hover:text-[#1db954] transition-colors"
               onclick={() => startEditing(selectedPlaylist)}
               title={$t("playlists.clickToRename")}
             >
               {selectedPlaylist.name}
-            </h2>
+            </button>
           {/if}
           <p class="text-xs text-white/50">
             {selectedPlaylist.tracks.length} {$t("library.songs")}
@@ -403,6 +407,7 @@
           class="group spotify-list-item flex items-center gap-3 py-2 mb-1 transition-all duration-200 {sortBy === 'manual' ? 'cursor-grab active:cursor-grabbing' : ''} {isCurrentTrack ? 'bg-white/10 ring-1 ring-white/5' : 'hover:bg-white/5'} {isMissing ? 'opacity-50' : ''}"
           animate:flip={{ duration: isTrackDragging ? flipDurationMs : 0 }}
           oncontextmenu={(e) => !isMissing && handleContextMenu(e, track)}
+          role="listitem"
         >
           <!-- Drag Handle -->
           {#if sortBy === "manual"}
@@ -436,7 +441,16 @@
           <!-- Track Info -->
           <div
             class="flex-1 min-w-0 {isMissing ? 'cursor-default' : 'cursor-pointer'}"
+            role="button"
+            tabindex={isMissing ? -1 : 0}
+            aria-disabled={isMissing}
             onclick={() => !isMissing && handlePlayTrack(track)}
+            onkeydown={(event) => {
+              if (!isMissing && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                handlePlayTrack(track);
+              }
+            }}
           >
             <p class="text-sm font-medium truncate transition-colors {isMissing ? 'text-red-400 line-through' : isCurrentTrack ? 'text-[#1db954]' : 'text-white group-hover:text-[#1db954]'}">
               {track.name}
@@ -563,7 +577,15 @@
               <!-- Playlist Info -->
               <div
                 class="flex-1 min-w-0 cursor-pointer"
+                role="button"
+                tabindex="0"
                 onclick={() => (selectedPlaylistId = playlist.id)}
+                onkeydown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    selectedPlaylistId = playlist.id;
+                  }
+                }}
               >
                 {#if editingPlaylistId === playlist.id}
                   <input
@@ -573,7 +595,7 @@
                     onblur={saveEdit}
                     onkeydown={(e) => e.key === "Enter" && saveEdit()}
                     onclick={(e) => e.stopPropagation()}
-                    autofocus
+                    use:autofocus
                   />
                 {:else}
                   <p class="font-semibold text-white truncate hover:text-[#1db954] transition-colors">
@@ -676,6 +698,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => { showCreateModal = false; newPlaylistName = ""; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <!-- Modal -->
@@ -698,14 +721,15 @@
       <div class="p-4 space-y-4">
         <!-- Name Input -->
         <div>
-          <label class="block text-sm font-medium text-white/70 mb-2">{$t("playlists.playlistName")}</label>
+          <label class="block text-sm font-medium text-white/70 mb-2" for="playlist-name-input">{$t("playlists.playlistName")}</label>
           <input
+            id="playlist-name-input"
             type="text"
             placeholder={$t("playlists.myPlaylist")}
             bind:value={newPlaylistName}
             class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#1db954] focus:border-transparent transition-all"
             onkeydown={(e) => e.key === "Enter" && handleCreate()}
-            autofocus
+            use:autofocus
           />
         </div>
 
@@ -740,6 +764,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={cancelDelete}
+      aria-label={$t("common.close")}
     ></button>
 
     <!-- Modal -->

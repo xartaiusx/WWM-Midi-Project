@@ -41,7 +41,9 @@ use std::thread;
 use tauri::{AppHandle, Emitter, State, Window};
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, HIGH_PRIORITY_CLASS};
-use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_NOREPEAT, VK_END};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, MOD_NOREPEAT, VK_END, VK_RETURN,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HHOOK,
     KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_HOTKEY, WM_KEYDOWN, WM_SYSKEYDOWN,
@@ -367,6 +369,20 @@ fn save_custom_window_keywords(keywords: &[String]) {
     save_config(&config);
 }
 
+fn load_saved_cloud_mode() {
+    let config = load_config();
+    if let Some(enabled) = config["cloud_mode"].as_bool() {
+        keyboard::set_send_input_mode(enabled);
+        app_log!("Loaded cloud mode: {}", enabled);
+    }
+}
+
+fn save_cloud_mode(enabled: bool) {
+    let mut config = load_config();
+    config["cloud_mode"] = serde_json::json!(enabled);
+    save_config(&config);
+}
+
 fn get_data_path(filename: &str) -> Result<std::path::PathBuf, String> {
     let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe_dir = exe_path
@@ -398,6 +414,109 @@ fn get_album_folder() -> Result<std::path::PathBuf, String> {
         .parent()
         .ok_or("Failed to get executable directory")?;
     Ok(exe_dir.join("album"))
+}
+
+fn find_repo_root_for_audio_midi() -> Result<std::path::PathBuf, String> {
+    let mut candidates = Vec::new();
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        candidates.extend(exe_path.ancestors().map(|p| p.to_path_buf()));
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.extend(current_dir.ancestors().map(|p| p.to_path_buf()));
+    }
+
+    for candidate in candidates {
+        if candidate
+            .join("tools")
+            .join("audio-to-wwm-midi")
+            .join("wwm_audio_to_midi.mjs")
+            .exists()
+            && candidate.join("scripts").join("audio-to-midi.cmd").exists()
+        {
+            return Ok(candidate);
+        }
+    }
+
+    Err("Could not locate the project root for audio-to-MIDI tools".into())
+}
+
+fn audio_midi_node_executable(repo_root: &std::path::Path) -> std::path::PathBuf {
+    let local_node = repo_root.join(".dev-tools").join("node").join("node.exe");
+    if local_node.exists() {
+        local_node
+    } else {
+        std::path::PathBuf::from("node")
+    }
+}
+
+fn run_audio_midi_tool(args: &[String]) -> Result<serde_json::Value, String> {
+    let repo_root = find_repo_root_for_audio_midi()?;
+    let node = audio_midi_node_executable(&repo_root);
+    let script = repo_root
+        .join("tools")
+        .join("audio-to-wwm-midi")
+        .join("wwm_audio_to_midi.mjs");
+
+    let output = std::process::Command::new(&node)
+        .arg(&script)
+        .args(args)
+        .current_dir(&repo_root)
+        .output()
+        .map_err(|e| {
+            format!(
+                "Failed to run audio-to-MIDI tool with {}: {}",
+                node.display(),
+                e
+            )
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        let detail = [stderr.trim(), stdout.trim()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(if detail.is_empty() {
+            "Audio-to-MIDI tool failed without output".into()
+        } else {
+            detail
+        });
+    }
+
+    serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!(
+            "Audio-to-MIDI tool returned invalid JSON: {}\n{}",
+            e, stdout
+        )
+    })
+}
+
+fn run_audio_midi_setup_script() -> Result<serde_json::Value, String> {
+    let repo_root = find_repo_root_for_audio_midi()?;
+    let script = repo_root.join("scripts").join("setup-audio-midi.cmd");
+
+    let output = std::process::Command::new("cmd")
+        .arg("/D")
+        .arg("/S")
+        .arg("/C")
+        .arg("call")
+        .arg(&script)
+        .current_dir(&repo_root)
+        .output()
+        .map_err(|e| format!("Failed to run setup script: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok(serde_json::json!({
+        "ok": output.status.success(),
+        "stdout": stdout,
+        "stderr": stderr,
+    }))
 }
 
 mod discovery;
@@ -937,6 +1056,13 @@ async fn pause_resume(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Playback
 }
 
 #[tauri::command]
+async fn pause_playback(state: State<'_, Arc<Mutex<AppState>>>) -> Result<PlaybackState, String> {
+    let mut app_state = state.lock().unwrap();
+    app_state.pause_playback();
+    Ok(app_state.get_playback_state())
+}
+
+#[tauri::command]
 async fn stop_playback(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut app_state = state.lock().unwrap();
     app_state.stop_playback();
@@ -1059,6 +1185,7 @@ async fn get_modifier_delay() -> Result<u64, String> {
 #[tauri::command]
 async fn set_cloud_mode(enabled: bool) -> Result<(), String> {
     keyboard::set_send_input_mode(enabled);
+    save_cloud_mode(enabled);
     Ok(())
 }
 
@@ -1541,6 +1668,63 @@ async fn reset_album_path() -> Result<String, String> {
         .parent()
         .ok_or("Failed to get executable directory")?;
     Ok(exe_dir.join("album").to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn get_audio_midi_status() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        run_audio_midi_tool(&["status".to_string(), "--json".to_string()])
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn setup_audio_midi_tools() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(run_audio_midi_setup_script)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn create_audio_midi(
+    input_path: Option<String>,
+    output_name: String,
+    profile: String,
+    key_mode: String,
+    record_seconds: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let album_path = get_album_folder()?.to_string_lossy().to_string();
+    let mut args = vec![
+        "create".to_string(),
+        "--json".to_string(),
+        "--album".to_string(),
+        album_path,
+        "--name".to_string(),
+        output_name,
+        "--profile".to_string(),
+        profile,
+        "--key-mode".to_string(),
+        key_mode,
+    ];
+
+    if let Some(path) = input_path {
+        if !path.trim().is_empty() {
+            args.push("--input".to_string());
+            args.push(path);
+        }
+    }
+
+    if let Some(seconds) = record_seconds {
+        if seconds > 0 {
+            args.push("--record".to_string());
+            args.push(seconds.to_string());
+        }
+    }
+
+    tauri::async_runtime::spawn_blocking(move || run_audio_midi_tool(&args))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ============ LOCALE MANAGEMENT ============
@@ -2253,32 +2437,36 @@ async fn check_for_update(current_version: String) -> Result<Option<UpdateInfo>,
         return Ok(None);
     }
 
-    // Find the zip asset
+    // Prefer a zip bundle when one exists, but current upstream releases publish
+    // a standalone Windows exe. Supporting both keeps the updater useful across
+    // release formats.
     let assets = json["assets"].as_array();
-    let download_url = assets
-        .and_then(|arr| {
-            arr.iter().find(|a| {
+    let selected_asset = assets.and_then(|arr| {
+        arr.iter()
+            .find(|a| {
                 a["name"]
                     .as_str()
                     .map(|n| n.ends_with(".zip"))
                     .unwrap_or(false)
             })
-        })
+            .or_else(|| {
+                arr.iter().find(|a| {
+                    a["name"]
+                        .as_str()
+                        .map(|n| n.ends_with(".exe"))
+                        .unwrap_or(false)
+                })
+            })
+    });
+
+    let download_url = selected_asset
         .and_then(|a| a["browser_download_url"].as_str())
         .map(|s| s.to_string());
 
-    let file_name = assets
-        .and_then(|arr| {
-            arr.iter().find(|a| {
-                a["name"]
-                    .as_str()
-                    .map(|n| n.ends_with(".zip"))
-                    .unwrap_or(false)
-            })
-        })
+    let file_name = selected_asset
         .and_then(|a| a["name"].as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("wwm-overlay-{}.zip", latest_version));
+        .unwrap_or_else(|| format!("wwm-overlay-{}.exe", latest_version));
 
     let release_url = json["html_url"]
         .as_str()
@@ -2941,14 +3129,22 @@ async fn install_update(zip_path: String, app_handle: AppHandle) -> Result<(), S
 
     let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe_dir = exe_path.parent().ok_or("Failed to get exe directory")?;
+    let update_path = std::path::Path::new(&zip_path);
+    let update_ext = update_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
 
     // Create update script that will:
     // 1. Wait for app to close
-    // 2. Extract zip over current installation
+    // 2. Extract zip over current installation or replace the exe
     // 3. Restart the app
     let script_path = std::env::temp_dir().join("wwm_update.bat");
-    let script_content = format!(
-        r#"@echo off
+
+    let script_content = if update_ext == "zip" {
+        format!(
+            r#"@echo off
 echo Updating WWM Overlay...
 timeout /t 2 /nobreak > nul
 powershell -Command "Expand-Archive -Path '{}' -DestinationPath '{}' -Force"
@@ -2956,10 +3152,27 @@ echo Update complete! Restarting...
 start "" "{}"
 del "%~f0"
 "#,
-        zip_path.replace("\\", "\\\\"),
-        exe_dir.to_string_lossy().replace("\\", "\\\\"),
-        exe_path.to_string_lossy().replace("\\", "\\\\")
-    );
+            zip_path.replace("\\", "\\\\"),
+            exe_dir.to_string_lossy().replace("\\", "\\\\"),
+            exe_path.to_string_lossy().replace("\\", "\\\\")
+        )
+    } else if update_ext == "exe" {
+        format!(
+            r#"@echo off
+echo Updating WWM Overlay...
+timeout /t 2 /nobreak > nul
+copy /Y "{}" "{}"
+echo Update complete! Restarting...
+start "" "{}"
+del "%~f0"
+"#,
+            zip_path,
+            exe_path.to_string_lossy(),
+            exe_path.to_string_lossy()
+        )
+    } else {
+        return Err("Unsupported update file type. Expected .zip or .exe".into());
+    };
 
     std::fs::write(&script_path, &script_content)
         .map_err(|e| format!("Failed to create update script: {}", e))?;
@@ -3135,7 +3348,9 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 }
                 // Normal mode: emit actions
                 else if !KEYBINDINGS_DISABLED {
-                    if vk == CACHED_PAUSE_RESUME_VK {
+                    if vk == VK_RETURN.0 as u32 && keyboard::is_wwm_focused().unwrap_or(false) {
+                        let _ = app_handle.emit("game-chat-opened", ());
+                    } else if vk == CACHED_PAUSE_RESUME_VK {
                         let _ = app_handle.emit("global-shortcut", "pause_resume");
                     } else if vk == CACHED_STOP_VK || vk == VK_END.0 as u32 {
                         let _ = app_handle.emit("global-shortcut", "stop");
@@ -3424,6 +3639,7 @@ fn main() {
     load_saved_album_path();
     load_saved_note_keys();
     load_custom_window_keywords();
+    load_saved_cloud_mode();
     load_saved_keybindings();
 
     let app_state = Arc::new(Mutex::new(AppState::new()));
@@ -3444,6 +3660,7 @@ fn main() {
             play_midi,
             play_midi_band,
             pause_resume,
+            pause_playback,
             stop_playback,
             get_playback_status,
             set_loop_mode,
@@ -3492,6 +3709,9 @@ fn main() {
             get_album_path,
             set_album_path,
             reset_album_path,
+            get_audio_midi_status,
+            setup_audio_midi_tools,
+            create_audio_midi,
             get_locales_path,
             get_user_locale,
             save_user_locale,

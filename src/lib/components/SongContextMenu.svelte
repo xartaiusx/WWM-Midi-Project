@@ -16,6 +16,10 @@
   let showDeleteModal = false;
   let deletingFile = null;
 
+  function autofocus(node) {
+    setTimeout(() => node.focus(), 0);
+  }
+
   function openRenameModal() {
     if (contextMenu?.file) {
       renamingFile = contextMenu.file;
@@ -84,6 +88,7 @@
     style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
     transition:fly={{ y: -5, duration: 150 }}
     onclick={(e) => e.stopPropagation()}
+    role="presentation"
   >
     <button
       class="w-full px-3 py-2 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-2"
@@ -119,6 +124,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => { showDeleteModal = false; deletingFile = null; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <div
@@ -161,6 +167,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => { showRenameModal = false; renamingFile = null; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <div
@@ -172,6 +179,7 @@
         <button
           class="p-1 rounded-full hover:bg-white/10 text-white/60 hover:text-white transition-colors"
           onclick={() => { showRenameModal = false; renamingFile = null; }}
+          title={$t("common.close")}
         >
           <Icon icon="mdi:close" class="w-5 h-5" />
         </button>
@@ -183,7 +191,7 @@
           bind:value={renameValue}
           class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#1db954] focus:border-transparent transition-all"
           onkeydown={(e) => e.key === 'Enter' && handleRename()}
-          autofocus
+          use:autofocus
         />
         <p class="text-xs text-white/40 mt-2">{$t("modals.rename.extensionNote")}</p>
       </div>

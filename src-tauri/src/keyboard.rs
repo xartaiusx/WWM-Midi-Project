@@ -28,6 +28,7 @@ pub const DEFAULT_HIGH_KEYS: [&str; 7] = ["q", "w", "e", "r", "t", "y", "u"];
 /// Set input mode: true = SendInput (cloud gaming), false = PostMessage (local)
 pub fn set_send_input_mode(enabled: bool) {
     USE_SEND_INPUT.store(enabled, Ordering::SeqCst);
+    clear_window_cache();
     println!(
         "[KEYBOARD] Input mode: {}",
         if enabled {
@@ -209,6 +210,7 @@ pub fn set_custom_window_keywords(keywords: Vec<String>) {
     if let Ok(mut guard) = CUSTOM_WINDOW_KEYWORDS.write() {
         *guard = keywords;
     }
+    clear_window_cache();
 }
 
 pub fn get_custom_window_keywords() -> Vec<String> {

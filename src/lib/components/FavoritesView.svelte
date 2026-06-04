@@ -340,6 +340,7 @@
             : 'hover:bg-white/5'} {isMissing ? 'opacity-50' : ''}"
           animate:flip={{ duration: isDragging ? flipDurationMs : 0 }}
           oncontextmenu={(e) => handleContextMenu(e, item)}
+          role="listitem"
         >
           <!-- Drag Handle -->
           {#if sortBy === "manual"}
@@ -481,6 +482,7 @@
     <button
       class="absolute inset-0 bg-black/60"
       onclick={() => showClearModal = false}
+      aria-label={$t("common.close")}
     ></button>
 
     <div

@@ -316,9 +316,10 @@
             <div class="mt-3 pt-3 border-t border-white/10 space-y-3" transition:fade={{ duration: 150 }}>
               <!-- Discovery Server URL -->
               <div class="space-y-1">
-                <label class="text-xs text-white/50">{$t("share.discoveryUrl")}</label>
+                <label class="text-xs text-white/50" for="share-discovery-url-connecting">{$t("share.discoveryUrl")}</label>
                 <div class="flex gap-2">
                   <input
+                    id="share-discovery-url-connecting"
                     type="text"
                     bind:value={serverUrlInput}
                     placeholder="https://discovery.example.com"
@@ -342,9 +343,10 @@
 
               <!-- Host Server -->
               <div class="space-y-1">
-                <label class="text-xs text-white/50">{$t("share.hostServer")}</label>
+                <label class="text-xs text-white/50" for="share-host-port-connecting">{$t("share.hostServer")}</label>
                 <div class="flex gap-2 items-center">
                   <input
+                    id="share-host-port-connecting"
                     type="number"
                     bind:value={serverPort}
                     placeholder="3456"
@@ -436,6 +438,7 @@
               <button
                 class="w-8 h-4 rounded-full transition-colors {$shareAll ? 'bg-[#1db954]' : 'bg-white/20'}"
                 onclick={toggleShareAll}
+                aria-label={$t("share.shareAll")}
               >
                 <div class="w-3 h-3 rounded-full bg-white transition-transform {$shareAll ? 'translate-x-4' : 'translate-x-0.5'}"></div>
               </button>
@@ -474,9 +477,10 @@
             <div class="mt-3 pt-3 border-t border-white/10 space-y-3" transition:fade={{ duration: 150 }}>
               <!-- Discovery Server URL -->
               <div class="space-y-1">
-                <label class="text-xs text-white/50">{$t("share.discoveryUrl")}</label>
+                <label class="text-xs text-white/50" for="share-discovery-url-connected">{$t("share.discoveryUrl")}</label>
                 <div class="flex gap-2">
                   <input
+                    id="share-discovery-url-connected"
                     type="text"
                     bind:value={serverUrlInput}
                     placeholder="https://discovery.example.com"
@@ -500,9 +504,10 @@
 
               <!-- Host Server -->
               <div class="space-y-1">
-                <label class="text-xs text-white/50">{$t("share.hostServer")}</label>
+                <label class="text-xs text-white/50" for="share-host-port-connected">{$t("share.hostServer")}</label>
                 <div class="flex gap-2 items-center">
                   <input
+                    id="share-host-port-connected"
                     type="number"
                     bind:value={serverPort}
                     placeholder="3456"
@@ -859,6 +864,7 @@
     <button
       class="absolute inset-0 bg-black/60 backdrop-blur-sm"
       onclick={() => { showDownloadModal = false; downloadingSong = null; }}
+      aria-label={$t("common.close")}
     ></button>
 
     <div

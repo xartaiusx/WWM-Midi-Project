@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { rmSync } from 'node:fs'
 import crypto from 'node:crypto'
@@ -29,6 +29,7 @@ if (typeof window !== 'undefined') {
 
 const components = [
   { label: 'src/App.svelte', path: '../App.svelte' },
+  { label: 'src/lib/components/AudioMidiCreator.svelte', path: '../lib/components/AudioMidiCreator.svelte' },
   { label: 'src/lib/components/BandMode.svelte', path: '../lib/components/BandMode.svelte' },
   { label: 'src/lib/components/FavoritesView.svelte', path: '../lib/components/FavoritesView.svelte' },
   { label: 'src/lib/components/Header.svelte', path: '../lib/components/Header.svelte' },
@@ -51,8 +52,8 @@ describe('Svelte component smoke tests', () => {
   for (const { label, path: componentPath } of components) {
     const timeout = label === 'src/App.svelte' ? 15000 : 5000
     it(`${label} compiles`, async () => {
-      const component = await bundleComponent(componentPath)
-      expect(typeof component).toBe('function')
+      const componentType = await bundleComponent(componentPath)
+      expect(componentType).toBe('function')
     }, timeout)
   }
 })
@@ -73,8 +74,28 @@ async function loadModuleFromCode(code) {
   const modulePath = generateTempFileName('components-smoke')
   tempFiles.add(modulePath)
   await writeFile(modulePath, code, 'utf8')
-  const module = await import(pathToFileURL(modulePath).href)
-  return module.default
+  const { stdout } = await execFileAsync('node', [
+    '--input-type=module',
+    '--eval',
+    `
+      import { pathToFileURL } from 'node:url'
+
+      globalThis.__TAURI__ = globalThis.__TAURI__ ?? {
+        invoke: async () => ({}),
+        event: {
+          listen: async () => ({
+            unlisten: async () => null,
+          }),
+        },
+        emit: async () => ({}),
+      }
+
+      const module = await import(pathToFileURL(process.argv[1]).href)
+      process.stdout.write(typeof module.default)
+    `,
+    modulePath,
+  ], { encoding: 'utf8' })
+  return stdout.trim()
 }
 
 function cleanupTempFilesSync() {
