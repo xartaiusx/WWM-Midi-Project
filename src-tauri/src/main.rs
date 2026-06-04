@@ -640,71 +640,69 @@ async fn load_midi_files() -> Result<Vec<MidiFile>, String> {
 
     let entries = std::fs::read_dir(&album_path).map_err(|e| e.to_string())?;
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("mid") {
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("mid") {
+            continue;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        let mtime = get_file_mtime(&path);
+
+        // Check cache - now includes hash and size
+        if let Some(cached) = cache.files.get(&path_str) {
+            if cached.mtime == mtime && !cached.hash.is_empty() {
+                // Full cache hit
+                files.push(MidiFile {
+                    name,
+                    path: path_str,
+                    duration: cached.duration,
+                    bpm: cached.bpm,
+                    note_density: cached.note_density,
+                    hash: cached.hash.clone(),
+                    size: cached.size,
+                });
                 continue;
             }
+        }
 
-            let path_str = path.to_string_lossy().to_string();
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Unknown")
-                .to_string();
-            let mtime = get_file_mtime(&path);
+        // Cache miss or stale - parse and compute
+        let meta = midi::get_midi_metadata(&path_str).unwrap_or(midi::MidiMetadata {
+            duration: 0.0,
+            bpm: 120,
+            note_count: 0,
+            note_density: 0.0,
+        });
+        let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let file_hash = compute_file_hash(&path).unwrap_or_else(|| format!("{:x}", file_size));
 
-            // Check cache - now includes hash and size
-            if let Some(cached) = cache.files.get(&path_str) {
-                if cached.mtime == mtime && !cached.hash.is_empty() {
-                    // Full cache hit
-                    files.push(MidiFile {
-                        name,
-                        path: path_str,
-                        duration: cached.duration,
-                        bpm: cached.bpm,
-                        note_density: cached.note_density,
-                        hash: cached.hash.clone(),
-                        size: cached.size,
-                    });
-                    continue;
-                }
-            }
-
-            // Cache miss or stale - parse and compute
-            let meta = midi::get_midi_metadata(&path_str).unwrap_or(midi::MidiMetadata {
-                duration: 0.0,
-                bpm: 120,
-                note_count: 0,
-                note_density: 0.0,
-            });
-            let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            let file_hash = compute_file_hash(&path).unwrap_or_else(|| format!("{:x}", file_size));
-
-            cache.files.insert(
-                path_str.clone(),
-                CachedMetadata {
-                    mtime,
-                    duration: meta.duration,
-                    bpm: meta.bpm,
-                    note_density: meta.note_density,
-                    hash: file_hash.clone(),
-                    size: file_size,
-                },
-            );
-            cache_modified = true;
-
-            files.push(MidiFile {
-                name,
-                path: path_str,
+        cache.files.insert(
+            path_str.clone(),
+            CachedMetadata {
+                mtime,
                 duration: meta.duration,
                 bpm: meta.bpm,
                 note_density: meta.note_density,
-                hash: file_hash,
+                hash: file_hash.clone(),
                 size: file_size,
-            });
-        }
+            },
+        );
+        cache_modified = true;
+
+        files.push(MidiFile {
+            name,
+            path: path_str,
+            duration: meta.duration,
+            bpm: meta.bpm,
+            note_density: meta.note_density,
+            hash: file_hash,
+            size: file_size,
+        });
     }
 
     // Save cache if modified
@@ -926,7 +924,8 @@ async fn load_midi_files_streaming(
             }
 
             // Step 2: Parse uncached files in parallel (no locking needed)
-            let parsed_files: Vec<(MidiFile, String, u64, f64, u16, f32, String, u64)> = uncached
+            type ParsedMidiFile = (MidiFile, String, u64, f64, u16, f32, String, u64);
+            let parsed_files: Vec<ParsedMidiFile> = uncached
                 .par_iter()
                 .filter_map(|(path, path_str, name, mtime)| {
                     let meta = midi::get_midi_metadata(path_str).unwrap_or(midi::MidiMetadata {
@@ -1505,7 +1504,7 @@ async fn import_midi_file(source_path: String) -> Result<MidiFile, String> {
     }
 
     // Copy file to album folder
-    std::fs::copy(&source, &dest_path).map_err(|e| format!("Failed to copy file: {}", e))?;
+    std::fs::copy(source, &dest_path).map_err(|e| format!("Failed to copy file: {}", e))?;
 
     // Get metadata and return file info
     let name = source
@@ -2140,7 +2139,7 @@ async fn rename_midi_file(old_path: String, new_name: String) -> Result<String, 
         return Err("A file with that name already exists".to_string());
     }
 
-    std::fs::rename(&source, &new_path).map_err(|e| format!("Failed to rename: {}", e))?;
+    std::fs::rename(source, &new_path).map_err(|e| format!("Failed to rename: {}", e))?;
 
     Ok(new_path.to_string_lossy().to_string())
 }
@@ -2160,7 +2159,7 @@ async fn delete_midi_file(path: String) -> Result<(), String> {
         return Err("Can only delete files in album folder".to_string());
     }
 
-    std::fs::remove_file(&file_path).map_err(|e| format!("Failed to delete: {}", e))?;
+    std::fs::remove_file(file_path).map_err(|e| format!("Failed to delete: {}", e))?;
 
     Ok(())
 }
@@ -3350,6 +3349,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 else if !KEYBINDINGS_DISABLED {
                     if vk == VK_RETURN.0 as u32 && keyboard::is_wwm_focused().unwrap_or(false) {
                         let _ = app_handle.emit("game-chat-opened", ());
+                    } else if vk == 0x70 && keyboard::is_wwm_focused().unwrap_or(false) {
+                        let _ = app_handle.emit("music-settings-opened", ());
                     } else if vk == CACHED_PAUSE_RESUME_VK {
                         let _ = app_handle.emit("global-shortcut", "pause_resume");
                     } else if vk == CACHED_STOP_VK || vk == VK_END.0 as u32 {

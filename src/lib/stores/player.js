@@ -925,15 +925,25 @@ export async function pauseResume() {
   }
 }
 
-export async function pausePlayback() {
+export async function pausePlayback(reason = 'manual') {
+  logUiAction('pausePlayback', 'started', { reason });
   try {
     const state = await invoke('pause_playback');
     isPaused.set(state.is_paused);
     isPlaying.set(state.is_playing);
     currentPosition.set(state.current_position);
     totalDuration.set(state.total_duration);
+    logUiAction('pausePlayback', 'completed', {
+      reason,
+      isPlaying: state.is_playing,
+      isPaused: state.is_paused,
+    });
   } catch (error) {
     console.error('Failed to pause playback:', error);
+    logUiAction('pausePlayback', 'error', {
+      reason,
+      error: error?.message || error,
+    });
   }
 }
 

@@ -40,11 +40,8 @@ name = "wwm-overlay"
 path = "src/main.rs"
 
 [profile.release]
-# '3' is default for release, can optimize for speed
-opt-level = 3 
-# Speeds up compile times by allowing more parallel compilation units (default is 256 in dev, 1 in release)
-codegen-units = 256 # (Experiment with values > 1)
-# Disabling LTO can speed up compilation, but increases app size and reduces runtime performance
-lto = false
-# Strip debug symbols
+# Optimize shipped builds for runtime behavior while keeping CI build time reasonable.
+opt-level = 3
+codegen-units = 16
+lto = "thin"
 strip = true

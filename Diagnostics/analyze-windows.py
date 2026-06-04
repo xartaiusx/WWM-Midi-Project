@@ -509,6 +509,67 @@ def markdown_table(rows: list[dict[str, Any]], columns: list[str]) -> str:
     return "\n".join(lines)
 
 
+def performance_checklist(commands: list[CommandRecord]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+
+    disks = [item for item in as_list(json_from_label(commands, "logical_disk_free_json")) if isinstance(item, dict)]
+    if disks:
+        notes: list[str] = []
+        for disk in disks:
+            size = float(ci_get(disk, "Size", default=0) or 0)
+            free = float(ci_get(disk, "FreeSpace", default=0) or 0)
+            percent = (free / size * 100.0) if size else 0.0
+            notes.append(f"{ci_get(disk, 'DeviceID', default='?')} {percent:.1f}% free")
+        rows.append(
+            {
+                "Area": "Free space",
+                "Evidence": "; ".join(notes),
+                "Action": "Keep enough SSD space available for Windows, game updates, build artifacts, and the release album.",
+            }
+        )
+    else:
+        rows.append({"Area": "Free space", "Evidence": "Unavailable", "Action": "Rerun if storage pressure is suspected."})
+
+    startup = [item for item in as_list(json_from_label(commands, "startup_commands_json")) if isinstance(item, dict)]
+    rows.append(
+        {
+            "Area": "Startup apps",
+            "Evidence": f"{len(startup)} startup command(s) collected" if startup else "Unavailable or none found",
+            "Action": "Review unnecessary startup/background apps before long play or build sessions.",
+        }
+    )
+
+    active_scheme_record = latest_success(commands, "powercfg_active_scheme")
+    active_scheme = read_text(active_scheme_record.stdout, 5000).strip() if active_scheme_record else "Unavailable"
+    rows.append(
+        {
+            "Area": "Power mode",
+            "Evidence": active_scheme,
+            "Action": "Use an appropriate plugged-in/high-performance mode when testing game latency.",
+        }
+    )
+
+    gamebar = latest_success(commands, "gamebar_registry_json")
+    rows.append(
+        {
+            "Area": "Windowed game settings",
+            "Evidence": "Game Bar/GameDVR/UserGpuPreferences collected" if gamebar else "Unavailable",
+            "Action": "Check Windows Graphics settings for windowed-game optimizations and per-app GPU preference.",
+        }
+    )
+
+    top_processes = latest_success(commands, "top_processes_json")
+    rows.append(
+        {
+            "Area": "Background load",
+            "Evidence": "Top CPU/working-set processes collected" if top_processes else "Unavailable",
+            "Action": "Close high-load unused apps when diagnosing overlay or game stutter.",
+        }
+    )
+
+    return rows
+
+
 def detected_rows(evidence: WindowsEvidence, classification: dict[str, Any]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     boot_number = classification.get("boot_disk_number", "")
@@ -631,6 +692,10 @@ def write_report(
         "## Visibility Matrix",
         "",
         markdown_table(matrix, ["Layer", "Tool/source", "Evidence found", "Interpretation"]),
+        "",
+        "## Windows Performance Checklist",
+        "",
+        markdown_table(performance_checklist(commands), ["Area", "Evidence", "Action"]),
         "",
         "## Detected Drives And Controllers",
         "",

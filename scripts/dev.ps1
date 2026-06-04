@@ -8,14 +8,14 @@ param(
 if ($Command.Count -eq 0) {
   git --version
   node --version
-  npm --version
+  bun --version
   cargo --version
   Write-Host ''
   Write-Host 'Usage: .\scripts\dev.cmd <command> [args...]'
   Write-Host 'Examples:'
-  Write-Host '  .\scripts\dev.cmd npm test'
-  Write-Host '  .\scripts\dev.cmd npm run build'
-  Write-Host '  .\scripts\dev.cmd npm run tauri-dev'
+  Write-Host '  .\scripts\dev.cmd bun run test'
+  Write-Host '  .\scripts\dev.cmd bun run build'
+  Write-Host '  .\scripts\dev.cmd bun run tauri-dev'
   exit 0
 }
 

@@ -80,7 +80,7 @@ pub fn get_note_key_bindings() -> (Vec<String>, Vec<String>, Vec<String>) {
             bindings
                 .as_ref()
                 .and_then(|b| b.get(&format!("low_{}", i)))
-                .map(|s| s.clone())
+                .cloned()
                 .unwrap_or_else(|| DEFAULT_LOW_KEYS[i].to_string())
         })
         .collect();
@@ -90,7 +90,7 @@ pub fn get_note_key_bindings() -> (Vec<String>, Vec<String>, Vec<String>) {
             bindings
                 .as_ref()
                 .and_then(|b| b.get(&format!("mid_{}", i)))
-                .map(|s| s.clone())
+                .cloned()
                 .unwrap_or_else(|| DEFAULT_MID_KEYS[i].to_string())
         })
         .collect();
@@ -100,7 +100,7 @@ pub fn get_note_key_bindings() -> (Vec<String>, Vec<String>, Vec<String>) {
             bindings
                 .as_ref()
                 .and_then(|b| b.get(&format!("high_{}", i)))
-                .map(|s| s.clone())
+                .cloned()
                 .unwrap_or_else(|| DEFAULT_HIGH_KEYS[i].to_string())
         })
         .collect();
@@ -399,14 +399,12 @@ fn parse_key(key: &str) -> Option<(u32, Modifier)> {
     let key_lower = key.to_lowercase();
 
     // Check for modifier prefix
-    if key_lower.starts_with("shift+") {
-        let base_key = &key_lower[6..];
+    if let Some(base_key) = key_lower.strip_prefix("shift+") {
         // First resolve custom binding, then convert to VK
         let bound_key = get_bound_key(base_key);
         return char_to_vk(&bound_key).map(|vk| (vk, Modifier::Shift));
     }
-    if key_lower.starts_with("ctrl+") {
-        let base_key = &key_lower[5..];
+    if let Some(base_key) = key_lower.strip_prefix("ctrl+") {
         let bound_key = get_bound_key(base_key);
         return char_to_vk(&bound_key).map(|vk| (vk, Modifier::Ctrl));
     }

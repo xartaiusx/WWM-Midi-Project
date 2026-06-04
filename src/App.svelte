@@ -15,6 +15,11 @@
   // Current version
   import { APP_VERSION, APP_FLAVOR } from "./lib/version.js";
   import { recordingKeybind, isImportingFiles } from "./lib/stores/player.js";
+  import {
+    MUSIC_PAUSE_REASONS,
+    createMusicPauseDiagnostic,
+    shouldPauseForMusicModeInterruption,
+  } from "./lib/utils/musicPauseGuards.js";
 
   // Game window detection
   let gameFound = false;
@@ -95,6 +100,7 @@
   let updateStatus = "idle"; // idle, checking, downloading, installing, error
   let updateError = "";
   let downloadedPath = "";
+  let updateCheckInterval;
 
   async function checkForUpdates() {
     try {
@@ -139,8 +145,15 @@
 
   async function checkGameWindow() {
     try {
-      gameFound = await invoke('is_game_window_found');
+      const found = await invoke('is_game_window_found');
+      if (found !== gameFound) {
+        console.debug('[diagnostics] game window detection changed', { found });
+      }
+      gameFound = found;
     } catch {
+      if (gameFound) {
+        console.debug('[diagnostics] game window detection changed', { found: false, error: true });
+      }
       gameFound = false;
     }
   }
@@ -200,6 +213,7 @@
 
   onDestroy(() => {
     if (checkInterval) clearInterval(checkInterval);
+    if (updateCheckInterval) clearInterval(updateCheckInterval);
     if (savePositionInterval) clearInterval(savePositionInterval);
     saveWindowPosition(); // Save on destroy
   });
@@ -440,17 +454,46 @@
     prevBandSelectMode = $bandSongSelectMode;
   }
 
-  let chatPausePending = false;
+  let musicPausePending = false;
 
-  async function pauseForGameChat() {
-    if (chatPausePending || !$smartPause || !$isPlaying || $isPaused) return;
+  function logMusicPauseDiagnostic(reason, outcome, state, error = null) {
+    const detail = createMusicPauseDiagnostic(reason, outcome, state);
+    if (error) detail.error = error?.message || String(error);
+    console.debug('[diagnostics] music pause guard', detail);
+    window.dispatchEvent(new CustomEvent('wwm-music-pause-diagnostic', { detail }));
+  }
 
-    chatPausePending = true;
-    try {
-      await pausePlayback();
-    } finally {
-      chatPausePending = false;
+  async function pauseForMusicModeInterruption(reason) {
+    const state = {
+      pending: musicPausePending,
+      smartPause: $smartPause,
+      isPlaying: $isPlaying,
+      isPaused: $isPaused,
+    };
+
+    if (!shouldPauseForMusicModeInterruption(state)) {
+      logMusicPauseDiagnostic(reason, 'skipped', state);
+      return;
     }
+
+    musicPausePending = true;
+    logMusicPauseDiagnostic(reason, 'triggered', state);
+    try {
+      await pausePlayback(reason);
+      logMusicPauseDiagnostic(reason, 'completed', { ...state, pending: false, isPaused: true });
+    } catch (error) {
+      logMusicPauseDiagnostic(reason, 'error', state, error);
+    } finally {
+      musicPausePending = false;
+    }
+  }
+
+  function pauseForGameChat() {
+    return pauseForMusicModeInterruption(MUSIC_PAUSE_REASONS.GAME_CHAT);
+  }
+
+  function pauseForMusicSettings() {
+    return pauseForMusicModeInterruption(MUSIC_PAUSE_REASONS.MUSIC_SETTINGS);
   }
 
   onMount(async () => {
@@ -481,7 +524,7 @@
     initializeListeners();
     initLibrary(); // Initialize library sharing (auto-connects if was enabled)
     checkForUpdates(); // Check for updates on startup
-    setInterval(checkForUpdates, 30 * 60 * 1000); // Check every 30 minutes
+    updateCheckInterval = setInterval(checkForUpdates, 30 * 60 * 1000); // Check every 30 minutes
 
     // Save window position every 5 seconds (only if changed)
     savePositionInterval = setInterval(saveWindowPosition, 5000);
@@ -533,10 +576,16 @@
       }
     });
     const unlistenChatOpened = await listen("game-chat-opened", pauseForGameChat);
+    const unlistenMusicSettingsOpened = await listen("music-settings-opened", pauseForMusicSettings);
+    const unlistenPlaybackDiagnostics = await listen("playback-diagnostics", (event) => {
+      console.debug('[diagnostics] playback timing', event.payload);
+    });
 
     return () => {
       unlisten();
       unlistenChatOpened();
+      unlistenMusicSettingsOpened();
+      unlistenPlaybackDiagnostics();
       window.removeEventListener('open-update-modal', handleOpenUpdateModal);
       window.removeEventListener('keybindings-changed', handleKeybindingsChanged);
     };

@@ -1,13 +1,13 @@
-FROM node:20-bullseye
+FROM oven/bun:1-debian
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
 COPY . ./
 
 ENV PORT=5173
 ENV CHOKIDAR_USEPOLLING=true
 EXPOSE 5173
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+CMD ["bun", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

@@ -7,7 +7,7 @@ let raw
 try {
   raw = readFileSync(reportPath, 'utf8')
 } catch (error) {
-  console.log(`::warning::Coverage report not found at ${reportPath}. Run npm run test:coverage first.`)
+  console.log(`::warning::Coverage report not found at ${reportPath}. Run bun run test:coverage first.`)
   process.exit(0)
 }
 

@@ -503,10 +503,20 @@ wwm-overlay/
 
 ## 🧪 Testing
 
-- `npm run test` - run the Vitest suite once (global jest-dom helpers are preloaded via src/setupTests.js).
-- `npm run test:watch` - keep Vitest in watch mode while you edit.
-- `npm run test:coverage` - emit coverage reports (text + lcov.info) via the built-in v8 provider; the report now covers every JavaScript/TypeScript/Svelte file under `src/` and `src-tauri/` (excluding folders like `node_modules` and the stores we intentionally skip) and writes results under coverage/.
-- `npm run coverage:check` - parse coverage/lcov.info and emit a warning if the line coverage for `src/lib/utils/**/*.js` and `src/lib/version.js` stays below 80% so the gate stays focused on the shared helper logic.
+- `.\scripts\dev.cmd bun run test` - run the Vitest suite once (global jest-dom helpers are preloaded via src/setupTests.js).
+- `.\scripts\dev.cmd bun run test:watch` - keep Vitest in watch mode while you edit.
+- `.\scripts\dev.cmd bun run test:coverage` - emit coverage reports (text + lcov.info) via the built-in v8 provider; the report now covers every JavaScript/TypeScript/Svelte file under `src/` and `src-tauri/` (excluding folders like `node_modules` and the stores we intentionally skip) and writes results under coverage/.
+- `.\scripts\dev.cmd bun run coverage:check` - parse coverage/lcov.info and emit a warning if the line coverage for `src/lib/utils/**/*.js` and `src/lib/version.js` stays below 80% so the gate stays focused on the shared helper logic.
+- `.\scripts\dev.cmd bun run album:audit` - scan the release album for exact and normalized duplicate MIDI files and validate tracked manifest metadata.
+- `.\scripts\dev.cmd bun run shortcut:verify` - verify the desktop shortcut points at the latest release executable.
 
-The coverage workflow (.github/workflows/coverage.yml) runs `npm run test:coverage` and `npm run coverage:check` on pushes to main and on pull requests so reviewers get soft warnings whenever coverage dips below the project-wide 80% target.
+The coverage workflow (.github/workflows/coverage.yml) runs `bun run test:coverage`, `bun run coverage:check`, and `bun run album:audit` on pushes to main and on pull requests so reviewers get soft warnings whenever coverage dips below the project-wide 80% target.
+
+## Windows 11 Performance Checklist
+
+- Keep Windows Update and optional driver updates current before diagnosing game or overlay stutter.
+- Keep Where Winds Meet on an SSD with enough free space for large updates.
+- Use Windows graphics settings for windowed-game optimizations when playing in borderless/windowed mode.
+- Reduce startup/background apps before long play sessions.
+- Use `Diagnostics\run-windows.ps1` for a read-only snapshot of storage, startup commands, power mode, free space, and relevant Windows event evidence.
 

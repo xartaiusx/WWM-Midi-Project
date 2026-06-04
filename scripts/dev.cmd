@@ -28,13 +28,13 @@ exit /b %ERRORLEVEL%
 :usage
 call git --version
 call node --version
-call npm --version
+call bun --version
 call cargo --version
 echo.
 echo Usage: .\scripts\dev.cmd ^<command^> [args...]
 echo Examples:
-echo   .\scripts\dev.cmd npm test
-echo   .\scripts\dev.cmd npm run build
-echo   .\scripts\dev.cmd npm run tauri-dev
+echo   .\scripts\dev.cmd bun run test
+echo   .\scripts\dev.cmd bun run build
+echo   .\scripts\dev.cmd bun run tauri-dev
 echo   .\scripts\dev.cmd scripts\audio-to-midi.cmd status
 exit /b 0

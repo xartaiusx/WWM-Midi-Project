@@ -330,6 +330,56 @@ function Collect-PowerThermal {
     } 'powercfg /a'
 }
 
+function Collect-WindowsPerformance {
+    param([string]$Prefix)
+
+    Invoke-IfAvailable "${Prefix}logical_disk_free_json" 'Get-CimInstance' {
+        Get-CimInstance Win32_LogicalDisk |
+            Where-Object { $_.DriveType -eq 3 } |
+            Sort-Object DeviceID |
+            Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace |
+            ConvertTo-DiagnosticJson
+    } 'Get-CimInstance Win32_LogicalDisk fixed disks | ConvertTo-Json'
+
+    Invoke-IfAvailable "${Prefix}startup_commands_json" 'Get-CimInstance' {
+        Get-CimInstance Win32_StartupCommand |
+            Sort-Object Name |
+            Select-Object Name,Command,Location,User |
+            ConvertTo-DiagnosticJson
+    } 'Get-CimInstance Win32_StartupCommand | ConvertTo-Json'
+
+    Invoke-IfAvailable "${Prefix}top_processes_json" 'Get-Process' {
+        Get-Process |
+            Sort-Object CPU -Descending |
+            Select-Object -First 25 ProcessName,Id,CPU,@{Name='WorkingSetMB';Expression={[math]::Round($_.WorkingSet64 / 1MB, 1)}} |
+            ConvertTo-DiagnosticJson
+    } 'Get-Process top CPU | ConvertTo-Json'
+
+    Invoke-IfAvailable "${Prefix}powercfg_active_scheme" 'powercfg.exe' {
+        & powercfg.exe /getactivescheme
+    } 'powercfg /getactivescheme'
+
+    Invoke-IfAvailable "${Prefix}gamebar_registry_json" 'Get-ItemProperty' {
+        $paths = @(
+            'HKCU:\Software\Microsoft\GameBar',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR',
+            'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+        )
+        foreach ($path in $paths) {
+            if (Test-Path -LiteralPath $path) {
+                $props = Get-ItemProperty -LiteralPath $path
+                [pscustomobject]@{
+                    Path = $path
+                    AllowAutoGameMode = $props.AllowAutoGameMode
+                    AutoGameModeEnabled = $props.AutoGameModeEnabled
+                    AppCaptureEnabled = $props.AppCaptureEnabled
+                    Keys = (($props.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | Select-Object -ExpandProperty Name) -join ', ')
+                }
+            }
+        } | ConvertTo-DiagnosticJson
+    } 'Get-ItemProperty GameBar/GameDVR/UserGpuPreferences | ConvertTo-Json'
+}
+
 $script:IsAdmin = Test-IsAdmin
 Write-Log "Creating diagnostic run at $RunDir"
 if ($NoAdmin) {
@@ -348,6 +398,7 @@ Invoke-IfAvailable 'initial_driverquery_storage' 'driverquery.exe' { & driverque
 Collect-StorageSnapshot 'initial_'
 Collect-EventSnapshot 'initial_'
 Collect-PowerThermal 'initial_'
+Collect-WindowsPerformance 'initial_'
 
 if ($ScanDevices) {
     Write-Log "WARNING: -ScanDevices requested. Running one Plug and Play device scan, then recollecting disk/PnP/event evidence."
@@ -365,6 +416,8 @@ $toolNames = @(
     'Get-WinEvent',
     'Get-CimInstance',
     'Get-StorageReliabilityCounter',
+    'Get-Process',
+    'Get-ItemProperty',
     'powercfg.exe',
     'pnputil.exe',
     'systeminfo.exe',

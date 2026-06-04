@@ -110,6 +110,42 @@ pub struct MidiTrackInfo {
     pub channel: Option<u8>, // MIDI channel (0-15) if consistent
 }
 
+#[derive(Debug, Clone, Default)]
+struct PlaybackDiagnostics {
+    notes_sent: u64,
+    notes_filtered: u64,
+    notes_dropped: u64,
+    max_note_send_latency_ms: f64,
+    total_note_send_latency_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PlaybackDiagnosticEvent {
+    reason: String,
+    notes_sent: u64,
+    notes_filtered: u64,
+    notes_dropped: u64,
+    avg_note_send_latency_ms: f64,
+    max_note_send_latency_ms: f64,
+}
+
+fn emit_playback_diagnostics(window: &Window, diagnostics: &PlaybackDiagnostics, reason: &str) {
+    let avg_note_send_latency_ms = if diagnostics.notes_sent > 0 {
+        diagnostics.total_note_send_latency_ms / diagnostics.notes_sent as f64
+    } else {
+        0.0
+    };
+    let event = PlaybackDiagnosticEvent {
+        reason: reason.to_string(),
+        notes_sent: diagnostics.notes_sent,
+        notes_filtered: diagnostics.notes_filtered,
+        notes_dropped: diagnostics.notes_dropped,
+        avg_note_send_latency_ms,
+        max_note_send_latency_ms: diagnostics.max_note_send_latency_ms,
+    };
+    let _ = window.emit("playback-diagnostics", event);
+}
+
 /// Get all MIDI metadata in a single parse (efficient for bulk loading)
 pub fn get_midi_metadata(path: &str) -> Result<MidiMetadata, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -144,10 +180,8 @@ pub fn get_midi_metadata(path: &str) -> Result<MidiMetadata, String> {
                 TrackEventKind::Midi {
                     message: MidiMessage::NoteOn { vel, .. },
                     ..
-                } => {
-                    if vel.as_int() > 0 {
-                        note_count += 1;
-                    }
+                } if vel.as_int() > 0 => {
+                    note_count += 1;
                 }
                 _ => {}
             }
@@ -234,11 +268,9 @@ pub fn get_midi_tracks(path: &str) -> Result<Vec<MidiTrackInfo>, String> {
                 TrackEventKind::Midi {
                     channel,
                     message: MidiMessage::NoteOn { vel, .. },
-                } => {
-                    if vel.as_int() > 0 {
-                        note_count += 1;
-                        channels.insert(channel.as_int());
-                    }
+                } if vel.as_int() > 0 => {
+                    note_count += 1;
+                    channels.insert(channel.as_int());
                 }
                 _ => {}
             }
@@ -391,7 +423,7 @@ fn detect_best_transpose(events: &[TimedEvent]) -> i32 {
 
         for event in events {
             if matches!(event.event_type, EventType::NoteOn) {
-                let transposed_note = (event.note as i32 + transpose) as i32;
+                let transposed_note = event.note as i32 + transpose;
                 let normalized = normalize_into_range(transposed_note);
 
                 // Find distance to nearest instrument note
@@ -513,11 +545,11 @@ fn note_to_key_pentatonic(note: i32, transpose: i32) -> String {
 
     // Map to pentatonic: C(0), D(2), E(4), G(7), A(9) -> keys 0,1,2,4,5
     let key_idx = match semitone {
-        0 | 1 => 0,     // C, C# -> do
-        2 | 3 => 1,     // D, Eb -> re
-        4 | 5 | 6 => 2, // E, F, F# -> mi
-        7 | 8 => 4,     // G, G# -> so
-        _ => 5,         // A, Bb, B -> la
+        0 | 1 => 0, // C, C# -> do
+        2 | 3 => 1, // D, Eb -> re
+        4..=6 => 2, // E, F, F# -> mi
+        7 | 8 => 4, // G, G# -> so
+        _ => 5,     // A, Bb, B -> la
     };
 
     match octave {
@@ -563,7 +595,7 @@ fn note_to_key_chromatic(note: i32, transpose: i32) -> String {
 /// MIDI note modulo 21 maps directly to one of 21 keys
 fn note_to_key_raw(note: i32) -> String {
     // Direct mapping: note % 21 gives key index 0-20
-    let key_idx = ((note % 21) + 21) % 21; // Handle negative notes
+    let key_idx = note.rem_euclid(21);
     let all_keys = [
         LOW_KEYS.as_slice(),
         MID_KEYS.as_slice(),
@@ -808,11 +840,11 @@ fn note_to_key_36_pentatonic(note: i32, transpose: i32) -> String {
 
     // Map to nearest pentatonic note
     let penta = match semitone {
-        0 | 1 => 0,       // C, C# -> C
-        2 | 3 => 2,       // D, D# -> D
-        4 | 5 | 6 => 4,   // E, F, F# -> E
-        7 | 8 => 7,       // G, G# -> G
-        9 | 10 | 11 => 9, // A, A#, B -> A
+        0 | 1 => 0,  // C, C# -> C
+        2 | 3 => 2,  // D, D# -> D
+        4..=6 => 4,  // E, F, F# -> E
+        7 | 8 => 7,  // G, G# -> G
+        9..=11 => 9, // A, A#, B -> A
         _ => 0,
     };
 
@@ -827,7 +859,7 @@ fn note_to_key_36_chromatic(note: i32, transpose: i32) -> String {
 /// 36-key Raw mode - direct 1:1 mapping, no transpose
 fn note_to_key_36_raw(note: i32) -> String {
     // 36 total keys: 12 per octave × 3 octaves
-    let key_idx = ((note % 36) + 36) % 36;
+    let key_idx = note.rem_euclid(36);
     let octave = (key_idx / 12) as usize;
     let semitone = key_idx % 12;
 
@@ -861,6 +893,7 @@ fn note_to_key_36_sharps(note: i32, transpose: i32) -> String {
     semitone_to_key_36(semitone, octave)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn play_midi(
     midi_data: MidiData,
     is_playing: Arc<AtomicBool>,
@@ -911,6 +944,8 @@ pub fn play_midi(
     });
 
     loop {
+        let mut diagnostics = PlaybackDiagnostics::default();
+
         // Get current seek offset (reset to 0 on loop)
         let offset_ms = (*seek_offset.lock().unwrap() * 1000.0) as u64;
 
@@ -1083,11 +1118,22 @@ pub fn play_midi(
 
                     if should_play {
                         // Simple press-release for each note (game doesn't need hold)
+                        let note_send_start = Instant::now();
                         crate::keyboard::key_down(&key);
                         crate::keyboard::key_up(&key);
+                        let latency_ms = note_send_start.elapsed().as_secs_f64() * 1000.0;
+                        diagnostics.notes_sent += 1;
+                        diagnostics.total_note_send_latency_ms += latency_ms;
+                        diagnostics.max_note_send_latency_ms =
+                            diagnostics.max_note_send_latency_ms.max(latency_ms);
 
                         // Emit note event for visualizer
                         let _ = window.emit("note-event", &key);
+                        if diagnostics.notes_sent % 128 == 0 {
+                            emit_playback_diagnostics(&window, &diagnostics, "periodic");
+                        }
+                    } else {
+                        diagnostics.notes_filtered += 1;
                     }
                 }
                 EventType::NoteOff => {
@@ -1098,6 +1144,7 @@ pub fn play_midi(
 
         // Release all remaining keys
         release_all_keys(&key_active_count);
+        emit_playback_diagnostics(&window, &diagnostics, "loop-complete");
 
         if !loop_mode.load(Ordering::SeqCst) {
             break;

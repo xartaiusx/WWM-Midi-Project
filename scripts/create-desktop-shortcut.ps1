@@ -24,7 +24,7 @@ $shortcut.Description = "Launch the latest WWM MIDI Project release build."
 $shortcut.Save()
 
 if (-not (Test-Path -LiteralPath $targetPath)) {
-  Write-Warning "Shortcut created, but the release executable does not exist yet. Run scripts\dev.cmd npm run tauri-build before launching it."
+  Write-Warning "Shortcut created, but the release executable does not exist yet. Run scripts\dev.cmd bun run tauri-build before launching it."
 }
 
 [pscustomobject]@{

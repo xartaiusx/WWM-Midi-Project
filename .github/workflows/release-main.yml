@@ -5,9 +5,13 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-main-${{ github.ref }}
   cancel-in-progress: false
+
 jobs:
   release:
     name: Build and draft release
@@ -25,58 +29,92 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Setup Bun.js
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Run frontend tests
+        run: bun run test
+
+      - name: Audit album metadata
+        run: bun run album:audit
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Check Rust build
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Run Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+
       - name: Build Tauri app
         run: bun run tauri-build
 
-      - name: Create album folder in bundle
+      - name: Create album folder next to executable
         shell: pwsh
         run: |
           $bundlePath = "src-tauri/target/release"
-          if (Test-Path $bundlePath) {
-            New-Item -Path "$bundlePath/album" -ItemType Directory -Force
-            Write-Host "Created album folder at $bundlePath/album"
+          New-Item -Path "$bundlePath/album" -ItemType Directory -Force
+          Write-Host "Created album folder at $bundlePath/album"
+
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          $releasePath = "src-tauri/target/release"
+          $files = @()
+          $files += Get-Item "$releasePath/wwm-overlay.exe"
+          if (Test-Path "$releasePath/bundle") {
+            $files += Get-ChildItem "$releasePath/bundle" -Recurse -File -Include *.exe,*.msi
           }
+          $files | ForEach-Object {
+            $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), ($_.FullName.Replace((Resolve-Path $releasePath).Path + "\", ""))
+          } | Set-Content "$releasePath/checksums.sha256"
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wwm-overlay-windows-main
           path: |
             src-tauri/target/release/wwm-overlay.exe
             src-tauri/target/release/album/
+            src-tauri/target/release/checksums.sha256
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.RELEASE_NAME }}
           prerelease: true
-          files: src-tauri/target/release/wwm-overlay.exe
+          files: |
+            src-tauri/target/release/wwm-overlay.exe
+            src-tauri/target/release/checksums.sha256
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
           body: |
             ## Notes
             Nightly build from main (${{ github.sha }}).
+
             ## Installation
-            1. Download `wwm-overlay.exe`
-            2. Create a folder for the app
-            3. Create an `album` folder next to the exe
-            4. Add your `.mid` files to the album folder
-            5. Run the app!
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            1. Download the installer or `wwm-overlay.exe`.
+            2. Keep an `album` folder next to the executable for MIDI files.
+            3. Run the app as Administrator when keyboard input needs to reach the game.
+
+            ## Integrity
+            Verify downloads with `checksums.sha256`.

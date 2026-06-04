@@ -108,6 +108,7 @@ pub fn list_midi_devices(midi_state: &mut MidiInputState) -> Vec<String> {
 }
 
 /// Start listening to a MIDI device
+#[allow(clippy::too_many_arguments)]
 pub fn start_listening(
     midi_state: Arc<Mutex<MidiInputState>>,
     device_index: usize,
@@ -425,8 +426,8 @@ fn note_to_key_pentatonic(note: i32, transpose: i32) -> String {
 
     let key_idx = match semitone {
         0 | 1 => 0,
-        2 | 3 | 4 => 1,
-        5 | 6 | 7 => 2,
+        2..=4 => 1,
+        5..=7 => 2,
         8 | 9 => 3,
         10 | 11 => 4,
         _ => 0,
@@ -471,7 +472,7 @@ fn note_to_key_chromatic(note: i32, transpose: i32) -> String {
 }
 
 fn note_to_key_raw(note: i32) -> String {
-    let key_idx = ((note % 21) + 21) % 21;
+    let key_idx = note.rem_euclid(21);
     let all_keys = [
         LOW_KEYS.as_slice(),
         MID_KEYS.as_slice(),
@@ -658,9 +659,9 @@ fn note_to_key_36_pentatonic(note: i32, transpose: i32) -> String {
     let penta = match semitone {
         0 | 1 => 0,
         2 | 3 => 2,
-        4 | 5 | 6 => 4,
+        4..=6 => 4,
         7 | 8 => 7,
-        9 | 10 | 11 => 9,
+        9..=11 => 9,
         _ => 0,
     };
 
@@ -672,7 +673,7 @@ fn note_to_key_36_chromatic(note: i32, transpose: i32) -> String {
 }
 
 fn note_to_key_36_raw(note: i32) -> String {
-    let key_idx = ((note % 36) + 36) % 36;
+    let key_idx = note.rem_euclid(36);
     let octave = (key_idx / 12) as usize;
     let semitone = key_idx % 12;
     semitone_to_key_36(semitone, octave)

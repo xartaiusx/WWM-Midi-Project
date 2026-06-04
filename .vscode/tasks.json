@@ -1,15 +1,43 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "tauri-build",
-			"type": "shell",
-			"command": "npm",
-			"args": [
-				"run",
-				"tauri-build"
-			],
-			"isBackground": false
-		}
-	]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\dev.cmd",
+      "args": ["bun", "run", "test"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\dev.cmd",
+      "args": ["bun", "run", "build"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "tauri-build",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\dev.cmd",
+      "args": ["bun", "run", "tauri-build"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "album-audit",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\dev.cmd",
+      "args": ["bun", "run", "album:audit"],
+      "problemMatcher": []
+    },
+    {
+      "label": "shortcut-verify",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\dev.cmd",
+      "args": ["bun", "run", "shortcut:verify"],
+      "problemMatcher": []
+    }
+  ]
 }

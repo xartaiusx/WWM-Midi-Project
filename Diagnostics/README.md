@@ -1,6 +1,6 @@
 # System Diagnostics
 
-Windows 11 Home-compatible diagnostic toolkit for an MSI laptop where a secondary M.2 NVMe SSD is physically installed but not detected.
+Windows 11 Home-compatible diagnostic toolkit for an MSI laptop where a secondary M.2 NVMe SSD is physically installed but not detected, with a read-only performance checklist for game/overlay troubleshooting.
 
 This toolkit is read-only by default. It collects Windows storage, PnP, NVMe/controller, event log, boot timing, thermal, and power evidence, then generates a Markdown report with findings, confidence, urgency, and recommended next steps.
 
@@ -32,6 +32,8 @@ The scripts use built-in Windows PowerShell/CIM/storage cmdlets and common Windo
 - `Get-CimInstance`
 - `Get-StorageReliabilityCounter` when available
 - `powercfg`
+- `Get-Process`
+- `Get-ItemProperty`
 - `pnputil` only when `-ScanDevices` is explicitly requested
 
 Administrator elevation is helpful for fuller event/storage data, but the collector continues without it and records skipped or failed evidence.
@@ -56,6 +58,11 @@ Collected evidence includes:
 - Diagnostics-Performance boot events
 - ACPI thermal zone and temperature probe data where exposed
 - battery/power report from `powercfg /batteryreport`
+- fixed-disk free space
+- startup command inventory
+- top CPU/working-set processes
+- active power scheme
+- Game Bar/Game DVR/User GPU Preferences registry values
 
 ## Unsafe Operations Intentionally Excluded
 

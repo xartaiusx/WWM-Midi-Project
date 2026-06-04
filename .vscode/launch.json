@@ -3,16 +3,13 @@
   "configurations": [
     {
       "name": "tauri dev",
-      "type": "pwa-node",
+      "type": "node-terminal",
       "request": "launch",
       "cwd": "${workspaceFolder}",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "tauri-dev"],
-      "console": "integratedTerminal",
+      "command": ".\\scripts\\dev.cmd bun run tauri-dev",
       "env": {
         "BROWSERSLIST_ENV": "development"
-      },
-      "internalConsoleOptions": "neverOpen"
+      }
     }
   ]
 }
