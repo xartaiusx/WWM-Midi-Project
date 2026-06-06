@@ -294,7 +294,7 @@
 
   // Note mode options for quick selector (reactive for i18n)
   $: noteModeOptionsList = [
-    { id: "Python", title: $t("noteMode.yuelyn"), short: "YL", icon: "mdi:heart", desc: $t("noteMode.yuelynDesc"), rmd21: true },
+    { id: "Python", title: $t("noteMode.recommended"), short: "REC", icon: "mdi:star", desc: $t("noteMode.recommendedDesc"), rmd21: true },
     { id: "Closest", title: $t("noteMode.closest"), short: "CLS", icon: "mdi:target", desc: $t("noteMode.closestDesc") },
     { id: "Wide", title: $t("noteMode.wide"), short: "WDE", icon: "mdi:arrow-expand-horizontal", desc: $t("noteMode.wideDesc") },
     { id: "Sharps", title: $t("noteMode.sharps"), short: "SHP", icon: "mdi:music-accidental-sharp", desc: $t("noteMode.sharpsDesc"), rmd36: true },
@@ -746,8 +746,7 @@
 
             <!-- Logo / Title -->
             <!-- <div class="px-3 py-2 mb-2 -mt-2"> -->
-            <!-- <h1 class="text-lg font-bold text-white/90">WWM Overlay</h1> -->
-            <!-- <p class="text-xs text-white/40">By YueLyn</p> -->
+            <!-- <h1 class="text-lg font-bold text-white/90">WWM Midi Project</h1> -->
             <!-- </div> -->
 
             <!-- Sidebar Tabs -->
@@ -828,17 +827,7 @@
               <span class="font-medium text-sm">Refresh</span>
             </button> -->
 
-            <p class="text-xs text-white/40 px-3">By YueLyn · v{APP_VERSION}{APP_FLAVOR ? `(${APP_FLAVOR})` : ''}</p>
-
-            <!-- Ko-fi Support -->
-            <button
-              onclick={() => invoke('open_url', { url: 'https://ko-fi.com/snowiy' })}
-              class="flex items-center gap-2 px-3 py-2 rounded-lg text-white/60 hover:text-[#ff5e5b] hover:bg-[#ff5e5b]/10 transition-all w-full mt-1"
-              title={$t("common.supportOnKofi")}
-            >
-              <Icon icon="simple-icons:kofi" class="w-4 h-4" />
-              <span class="text-xs">{$t("common.supportOnKofi")}</span>
-            </button>
+            <p class="text-xs text-white/40 px-3">WWM Midi Project - v{APP_VERSION}{APP_FLAVOR ? `(${APP_FLAVOR})` : ''}</p>
             <!-- Keyboard Shortcuts Info -->
             <div class="px-3 py-3 bg-white/5 rounded-lg mt-2">
               <p

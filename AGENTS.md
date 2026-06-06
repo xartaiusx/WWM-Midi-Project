@@ -2,7 +2,7 @@
 
 ## Project Expectations
 
-- This is a Windows-first Tauri 2 + Svelte 5 + Rust project for the Where Winds Meet MIDI overlay.
+- This is a Windows-first Tauri 2 + Svelte 5 + Rust project for WWM Midi Project.
 - Use `scripts\dev.cmd` as the Windows entrypoint for local commands so Bun, Rust, Visual Studio Build Tools, Git, and local dev tools resolve consistently.
 - Prefer Bun for package scripts and installs. Do not add npm lifecycle hooks or npm-only instructions.
 - Do not change gameplay behavior unless the request explicitly asks for it. Pause/input changes must stay scoped to music-mode safeguards.

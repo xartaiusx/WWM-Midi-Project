@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "WWM MIDI PLAYER",
+    "title": "WWM MIDI PROJECT",
     "interactive": "โหมดโต้ตอบ",
     "clickThrough": "โหมดคลิกทะลุ",
     "minimize": "ย่อหน้าต่าง",
@@ -40,8 +40,6 @@
   },
   "noteMode": {
     "title": "โหมดโน้ต",
-    "yuelyn": "YueLyn",
-    "yuelynDesc": "โหมดเล่นที่ YueLyn ชอบที่สุด",
     "closest": "ใกล้ที่สุด",
     "closestDesc": "เหมาะกับเพลงส่วนใหญ่",
     "wide": "กว้าง",
@@ -57,7 +55,9 @@
     "chromatic": "โครมาติก",
     "chromaticDesc": "แมป 12 เป็น 7 คีย์",
     "raw": "ดิบ",
-    "rawDesc": "1:1 โดยตรง ไม่ประมวลผล"
+    "rawDesc": "1:1 โดยตรง ไม่ประมวลผล",
+    "recommended": "Recommended",
+    "recommendedDesc": "Balanced default mapping"
   },
   "keyMode": {
     "title": "โหมดคีย์",
@@ -137,7 +137,7 @@
       "smartPause": "หยุดอัจฉริยะ",
       "smartPauseDesc": "หยุดอัตโนมัติเมื่อเกมไม่โฟกัส",
       "cloudMode": "โหมดเกมคลาวด์",
-      "cloudModeDesc": "สำหรับ GeForce Now, Xbox Cloud ฯลฯ",
+      "cloudModeDesc": "For cloud streaming clients",
       "cloudWarning1": "ใช้ SendInput (จำลองคีย์บอร์ดทั่วไป)",
       "cloudWarning2": "ไม่สามารถเล่นพื้นหลังโดยไม่โฟกัสได้",
       "cloudWarning3": "อย่าพิมพ์ขณะเล่น - ปุ่มจะรบกวน!"
@@ -154,11 +154,11 @@
     },
     "about": {
       "title": "เกี่ยวกับ",
-      "description": "Midi Player สำหรับ Where Winds Meet",
-      "byYueLyn": "โดย YueLyn",
+      "description": "Local MIDI player, library manager, and audio-to-MIDI creator for WWM Midi Project",
       "updateAvailable": "มีอัปเดตใหม่",
       "clickToDownload": "คลิกเพื่อดาวน์โหลด",
-      "latestVersion": "คุณใช้เวอร์ชันล่าสุดแล้ว"
+      "latestVersion": "คุณใช้เวอร์ชันล่าสุดแล้ว",
+      "projectName": "WWM Midi Project"
     },
     "debug": {
       "title": "ทดสอบสแปม (Dev)",
@@ -395,8 +395,7 @@
     "gameNotFound": "ไม่พบเกม",
     "gameFound": "พบเกม",
     "on": "เปิด",
-    "off": "ปิด",
-    "supportOnKofi": "สนับสนุนบน Ko-fi"
+    "off": "ปิด"
   },
   "stats": {
     "title": "สถิติ",

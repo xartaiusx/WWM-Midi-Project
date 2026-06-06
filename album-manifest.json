@@ -9,37 +9,6 @@
     "rejected"
   ],
   "allowExactDuplicateHashes": [],
-  "allowNormalizedDuplicates": [
-    {
-      "duplicateKey": "a cruel angels thesis",
-      "patterns": ["cruel", "angel"],
-      "reason": "Existing baseline contains multiple user-provided arrangements."
-    },
-    {
-      "duplicateKey": "dearly beloved",
-      "patterns": ["dearly beloved"],
-      "reason": "Existing baseline contains multiple Kingdom Hearts arrangements."
-    },
-    {
-      "duplicateKey": "golden huntrx",
-      "patterns": ["golden"],
-      "reason": "Existing baseline contains multiple user-provided arrangements."
-    },
-    {
-      "duplicateKey": "in end linkin park",
-      "patterns": ["in the end", "linkin park"],
-      "reason": "Existing baseline contains multiple user-provided arrangements."
-    },
-    {
-      "duplicateKey": "naruto sadness sorrow",
-      "patterns": ["sadness", "sorrow"],
-      "reason": "Existing baseline contains multiple Naruto arrangements."
-    },
-    {
-      "duplicateKey": "toxic britney spears",
-      "patterns": ["toxic", "britney spears"],
-      "reason": "Existing baseline contains multiple user-provided arrangements."
-    }
-  ],
+  "allowNormalizedDuplicates": [],
   "entries": []
 }

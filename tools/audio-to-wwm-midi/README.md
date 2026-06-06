@@ -1,7 +1,7 @@
 # WWM Audio-to-MIDI Creator
 
 This tool records local Windows playback or accepts an existing audio/MIDI file,
-then creates a Where Winds Meet friendly `.mid` file in the project library.
+then creates a WWM Midi Project friendly `.mid` file in the project library.
 
 The pipeline is:
 

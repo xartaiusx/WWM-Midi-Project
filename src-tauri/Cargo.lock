@@ -6360,7 +6360,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wwm-overlay"
+name = "wwm-midi-project"
 version = "1.1.9"
 dependencies = [
  "axum",

@@ -1,5 +1,5 @@
 {
-  "name": "wwm-overlay",
+  "name": "wwm-midi-project",
   "version": "1.1.9",
   "module": "index.ts",
   "type": "module",

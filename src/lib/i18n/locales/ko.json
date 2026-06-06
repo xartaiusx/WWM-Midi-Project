@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "WWM MIDI PLAYER",
+    "title": "WWM MIDI PROJECT",
     "interactive": "인터랙티브",
     "clickThrough": "클릭 통과",
     "minimize": "최소화",
@@ -40,8 +40,6 @@
   },
   "noteMode": {
     "title": "노트 모드",
-    "yuelyn": "YueLyn",
-    "yuelynDesc": "YueLyn이 선호하는 모드",
     "closest": "가장 가까운",
     "closestDesc": "대부분의 곡에 최적",
     "wide": "와이드",
@@ -57,7 +55,9 @@
     "chromatic": "크로매틱",
     "chromaticDesc": "12음→7키 매핑",
     "raw": "Raw",
-    "rawDesc": "1:1 직접, 처리 없음"
+    "rawDesc": "1:1 직접, 처리 없음",
+    "recommended": "Recommended",
+    "recommendedDesc": "Balanced default mapping"
   },
   "keyMode": {
     "title": "키 모드",
@@ -137,7 +137,7 @@
       "smartPause": "스마트 일시정지",
       "smartPauseDesc": "게임이 포커스를 잃으면 자동 일시정지",
       "cloudMode": "클라우드 게이밍 모드",
-      "cloudModeDesc": "GeForce Now, Xbox Cloud 등용",
+      "cloudModeDesc": "For cloud streaming clients",
       "cloudWarning1": "SendInput 사용 (글로벌 키보드 시뮬레이션)",
       "cloudWarning2": "포커스 없이 백그라운드 재생 불가",
       "cloudWarning3": "재생 중 타이핑 금지 - 키가 간섭합니다!"
@@ -154,11 +154,11 @@
     },
     "about": {
       "title": "정보",
-      "description": "Where Winds Meet용 MIDI 플레이어",
-      "byYueLyn": "By YueLyn",
+      "description": "Local MIDI player, library manager, and audio-to-MIDI creator for WWM Midi Project",
       "updateAvailable": "업데이트 가능",
       "clickToDownload": "클릭하여 다운로드",
-      "latestVersion": "최신 버전입니다"
+      "latestVersion": "최신 버전입니다",
+      "projectName": "WWM Midi Project"
     },
     "debug": {
       "title": "스팸 테스트 (개발용)",
@@ -395,8 +395,7 @@
     "gameNotFound": "게임을 찾을 수 없음",
     "gameFound": "게임 감지됨",
     "on": "켜기",
-    "off": "끄기",
-    "supportOnKofi": "Ko-fi에서 후원"
+    "off": "끄기"
   },
   "stats": {
     "title": "통계",

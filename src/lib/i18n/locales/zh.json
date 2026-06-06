@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "WWM MIDI 播放器",
+    "title": "WWM MIDI PROJECT",
     "interactive": "交互模式",
     "clickThrough": "穿透模式",
     "minimize": "最小化",
@@ -40,8 +40,6 @@
   },
   "noteMode": {
     "title": "音符模式",
-    "yuelyn": "YueLyn",
-    "yuelynDesc": "YueLyn最爱的演奏模式",
     "closest": "最近音",
     "closestDesc": "适合大多数歌曲",
     "wide": "宽音域",
@@ -57,7 +55,9 @@
     "chromatic": "半音阶",
     "chromaticDesc": "12键映射到7键",
     "raw": "原始",
-    "rawDesc": "1:1直接映射，无处理"
+    "rawDesc": "1:1直接映射，无处理",
+    "recommended": "Recommended",
+    "recommendedDesc": "Balanced default mapping"
   },
   "keyMode": {
     "title": "按键模式",
@@ -137,7 +137,7 @@
       "smartPause": "智能暂停",
       "smartPauseDesc": "游戏失去焦点时自动暂停",
       "cloudMode": "云游戏模式",
-      "cloudModeDesc": "适用于GeForce Now、Xbox Cloud等",
+      "cloudModeDesc": "For cloud streaming clients",
       "cloudWarning1": "使用SendInput（全局键盘模拟）",
       "cloudWarning2": "无法在后台播放",
       "cloudWarning3": "播放时请勿打字，会产生干扰！"
@@ -154,11 +154,11 @@
     },
     "about": {
       "title": "关于",
-      "description": "燕云十六声 MIDI播放器",
-      "byYueLyn": "作者 YueLyn",
+      "description": "Local MIDI player, library manager, and audio-to-MIDI creator for WWM Midi Project",
       "updateAvailable": "有新版本",
       "clickToDownload": "点击下载",
-      "latestVersion": "已是最新版本"
+      "latestVersion": "已是最新版本",
+      "projectName": "WWM Midi Project"
     },
     "debug": {
       "title": "连发测试（开发）",
@@ -395,8 +395,7 @@
     "gameNotFound": "未找到游戏",
     "gameFound": "已找到游戏",
     "on": "开",
-    "off": "关",
-    "supportOnKofi": "在 Ko-fi 上支持"
+    "off": "关"
   },
   "stats": {
     "title": "统计",

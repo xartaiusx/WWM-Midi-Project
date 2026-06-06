@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$targetPath = Join-Path $repoRoot "src-tauri\target\release\wwm-overlay.exe"
+$targetPath = Join-Path $repoRoot "src-tauri\target\release\wwm-midi-project.exe"
 $workingDirectory = Split-Path -Parent $targetPath
 $iconPath = Join-Path $repoRoot "src-tauri\icons\icon.ico"
 $desktopPath = [Environment]::GetFolderPath("Desktop")

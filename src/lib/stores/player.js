@@ -15,7 +15,7 @@ export const currentFile = writable(null);
 export const loopMode = writable(false);
 export const shuffleMode = writable(false);
 
-// Note calculation mode (default: Python/YueLyn)
+// Note calculation mode (default: recommended project mapping)
 export const noteMode = writable("Python");
 
 // Key mode (21 or 36 keys)

@@ -68,7 +68,7 @@ jobs:
         run: |
           $releasePath = "src-tauri/target/release"
           $files = @()
-          $files += Get-Item "$releasePath/wwm-overlay.exe"
+          $files += Get-Item "$releasePath/wwm-midi-project.exe"
           if (Test-Path "$releasePath/bundle") {
             $files += Get-ChildItem "$releasePath/bundle" -Recurse -File -Include *.exe,*.msi
           }
@@ -80,9 +80,9 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: wwm-overlay-windows
+          name: wwm-midi-project-windows
           path: |
-            src-tauri/target/release/wwm-overlay.exe
+            src-tauri/target/release/wwm-midi-project.exe
             src-tauri/target/release/album/
             src-tauri/target/release/checksums.sha256
             src-tauri/target/release/bundle/nsis/*.exe
@@ -94,13 +94,13 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
-            src-tauri/target/release/wwm-overlay.exe
+            src-tauri/target/release/wwm-midi-project.exe
             src-tauri/target/release/checksums.sha256
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
           body: |
             ## Installation
-            1. Download the installer or `wwm-overlay.exe`.
+            1. Download the installer or `wwm-midi-project.exe`.
             2. Keep an `album` folder next to the executable for MIDI files.
             3. Run the app as Administrator when keyboard input needs to reach the game.
 

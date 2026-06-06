@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "WWM MIDI PLAYER",
+    "title": "WWM MIDI PROJECT",
     "interactive": "インタラクティブ",
     "clickThrough": "クリックスルー",
     "minimize": "最小化",
@@ -40,8 +40,6 @@
   },
   "noteMode": {
     "title": "ノートモード",
-    "yuelyn": "YueLyn",
-    "yuelynDesc": "YueLynのお気に入りモード",
     "closest": "最近接",
     "closestDesc": "ほとんどの曲に最適",
     "wide": "ワイド",
@@ -57,7 +55,9 @@
     "chromatic": "クロマチック",
     "chromaticDesc": "12音→7キーマッピング",
     "raw": "Raw",
-    "rawDesc": "1:1直接、処理なし"
+    "rawDesc": "1:1直接、処理なし",
+    "recommended": "Recommended",
+    "recommendedDesc": "Balanced default mapping"
   },
   "keyMode": {
     "title": "キーモード",
@@ -137,7 +137,7 @@
       "smartPause": "スマートポーズ",
       "smartPauseDesc": "ゲームがフォーカスを失ったとき自動で一時停止",
       "cloudMode": "クラウドゲーミングモード",
-      "cloudModeDesc": "GeForce Now、Xbox Cloudなど用",
+      "cloudModeDesc": "For cloud streaming clients",
       "cloudWarning1": "SendInput使用（グローバルキーボードシミュレーション）",
       "cloudWarning2": "フォーカスなしのバックグラウンド再生は不可",
       "cloudWarning3": "再生中はタイピング禁止 - キーが干渉します！"
@@ -154,11 +154,11 @@
     },
     "about": {
       "title": "について",
-      "description": "Where Winds Meet用MIDIプレーヤー",
-      "byYueLyn": "By YueLyn",
+      "description": "Local MIDI player, library manager, and audio-to-MIDI creator for WWM Midi Project",
       "updateAvailable": "アップデート利用可能",
       "clickToDownload": "クリックしてダウンロード",
-      "latestVersion": "最新バージョンです"
+      "latestVersion": "最新バージョンです",
+      "projectName": "WWM Midi Project"
     },
     "debug": {
       "title": "スパムテスト (開発用)",
@@ -395,8 +395,7 @@
     "gameNotFound": "ゲームが見つかりません",
     "gameFound": "ゲームを検出",
     "on": "オン",
-    "off": "オフ",
-    "supportOnKofi": "Ko-fiでサポート"
+    "off": "オフ"
   },
   "stats": {
     "title": "統計",

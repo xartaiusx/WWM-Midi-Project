@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "WWM MIDI PLAYER",
+    "title": "WWM MIDI PROJECT",
     "interactive": "Interactive",
     "clickThrough": "Click-through",
     "minimize": "Minimize",
@@ -40,8 +40,6 @@
   },
   "noteMode": {
     "title": "Note Mode",
-    "yuelyn": "YueLyn",
-    "yuelynDesc": "YueLyn's favorite play mode",
     "closest": "Closest",
     "closestDesc": "Best fit for most songs",
     "wide": "Wide",
@@ -57,7 +55,9 @@
     "chromatic": "Chromatic",
     "chromaticDesc": "12 to 7 key mapping",
     "raw": "Raw",
-    "rawDesc": "1:1 direct, no processing"
+    "rawDesc": "1:1 direct, no processing",
+    "recommended": "Recommended",
+    "recommendedDesc": "Balanced default mapping"
   },
   "keyMode": {
     "title": "Key Mode",
@@ -137,7 +137,7 @@
       "smartPause": "Smart Pause",
       "smartPauseDesc": "Auto-pause when game loses focus",
       "cloudMode": "Cloud Gaming Mode",
-      "cloudModeDesc": "For GeForce Now, Xbox Cloud, etc.",
+      "cloudModeDesc": "For cloud streaming clients",
       "cloudWarning1": "Uses SendInput (global keyboard simulation)",
       "cloudWarning2": "Background play without focus is NOT possible",
       "cloudWarning3": "Don't type while playing - keys will interfere!"
@@ -154,11 +154,11 @@
     },
     "about": {
       "title": "About",
-      "description": "Midi Player for Where Winds Meet",
-      "byYueLyn": "By YueLyn",
+      "description": "Local MIDI player, library manager, and audio-to-MIDI creator for WWM Midi Project",
       "updateAvailable": "Update Available",
       "clickToDownload": "Click to download",
-      "latestVersion": "You're on the latest version"
+      "latestVersion": "You're on the latest version",
+      "projectName": "WWM Midi Project"
     },
     "debug": {
       "title": "Spam Test (Dev)",
@@ -395,8 +395,7 @@
     "gameNotFound": "Game not found",
     "gameFound": "Game found",
     "on": "ON",
-    "off": "OFF",
-    "supportOnKofi": "Support on Ko-fi"
+    "off": "OFF"
   },
   "stats": {
     "title": "Stats",

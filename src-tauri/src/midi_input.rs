@@ -83,7 +83,7 @@ impl MidiInputState {
 pub fn list_midi_devices(midi_state: &mut MidiInputState) -> Vec<String> {
     let mut ports = Vec::new();
 
-    match MidiInput::new("WWM Overlay Scanner") {
+    match MidiInput::new("WWM Midi Project Scanner") {
         Ok(midi_in) => {
             let in_ports = midi_in.ports();
             for port in in_ports.iter() {
@@ -140,7 +140,7 @@ pub fn start_listening(
     drop(state);
 
     // Create new MIDI input
-    let midi_in = MidiInput::new("WWM Overlay Live")
+    let midi_in = MidiInput::new("WWM Midi Project Live")
         .map_err(|e| format!("Failed to create MIDI input: {}", e))?;
 
     let ports = midi_in.ports();

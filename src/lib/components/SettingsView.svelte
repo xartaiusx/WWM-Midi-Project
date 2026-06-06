@@ -494,7 +494,7 @@
 
   // Note calculation mode options (reactive for i18n)
   $: noteModesList = [
-    { id: "Python", name: $t("noteMode.yuelyn"), description: $t("noteMode.yuelynDesc"), rmd21: true },
+    { id: "Python", name: $t("noteMode.recommended"), description: $t("noteMode.recommendedDesc"), rmd21: true },
     { id: "Closest", name: $t("noteMode.closest"), description: $t("noteMode.closestDesc") },
     { id: "Wide", name: $t("noteMode.wide"), description: $t("noteMode.wideDesc") },
     { id: "Sharps", name: $t("noteMode.sharps"), description: $t("noteMode.sharpsDesc"), rmd36: true },
@@ -686,7 +686,7 @@
       <div>
         <p class="text-xs text-white/40 mb-2">{$t("settings.window.builtIn")}</p>
         <div class="flex flex-wrap gap-1.5">
-          {#each ['Where Winds Meet', 'WWM', 'GeForce Now', '燕云十六声', '연운'] as builtin}
+          {#each ['WWM', 'wwm.exe'] as builtin}
             <span class="px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/60">{builtin}</span>
           {/each}
         </div>
@@ -1135,7 +1135,7 @@
       <div class="text-sm text-white/60 space-y-3">
         <p>{$t("settings.about.description")}</p>
         <div class="flex items-center gap-2">
-          <span class="text-xs text-white/40">{$t("settings.about.byYueLyn")}</span>
+          <span class="text-xs text-white/40">{$t("settings.about.projectName")}</span>
           <span class="text-white/20">•</span>
           <span class="text-xs text-white/40">v{APP_VERSION}{APP_FLAVOR ? `(${APP_FLAVOR})` : ''}</span>
         </div>

@@ -26,14 +26,14 @@ macro_rules! app_error {
 fn init_logger() {
     let log_path = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("wwm-overlay.log")))
-        .unwrap_or_else(|| std::path::PathBuf::from("wwm-overlay.log"));
+        .and_then(|p| p.parent().map(|d| d.join("wwm-midi-project.log")))
+        .unwrap_or_else(|| std::path::PathBuf::from("wwm-midi-project.log"));
 
     let config = ConfigBuilder::new().set_time_format_rfc3339().build();
 
     if let Ok(file) = File::create(&log_path) {
         let _ = WriteLogger::init(LevelFilter::Info, config, file);
-        info!("=== WWM Overlay Started ===");
+        info!("=== WWM Midi Project Started ===");
     }
 }
 use serde::{Deserialize, Serialize};
@@ -2405,12 +2405,15 @@ struct UpdateInfo {
 async fn check_for_update(current_version: String) -> Result<Option<UpdateInfo>, String> {
     use std::io::Read;
 
-    let response = ureq::get(
-        "https://api.github.com/repos/SnowiyQ/Where-Winds-Meet-Midi-Player/releases/latest",
-    )
-    .set("User-Agent", "WWM-Overlay")
-    .call()
-    .map_err(|e| format!("Failed to check for updates: {}", e))?;
+    let update_api_url = match std::env::var("WWM_MIDI_UPDATE_API_URL") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => return Ok(None),
+    };
+
+    let response = ureq::get(&update_api_url)
+        .set("User-Agent", "WWM-Midi-Project")
+        .call()
+        .map_err(|e| format!("Failed to check for updates: {}", e))?;
 
     let mut body = String::new();
     response
@@ -2436,9 +2439,8 @@ async fn check_for_update(current_version: String) -> Result<Option<UpdateInfo>,
         return Ok(None);
     }
 
-    // Prefer a zip bundle when one exists, but current upstream releases publish
-    // a standalone Windows exe. Supporting both keeps the updater useful across
-    // release formats.
+    // Prefer a zip bundle when one exists, then fall back to a standalone
+    // Windows executable for locally published release assets.
     let assets = json["assets"].as_array();
     let selected_asset = assets.and_then(|arr| {
         arr.iter()
@@ -2465,12 +2467,9 @@ async fn check_for_update(current_version: String) -> Result<Option<UpdateInfo>,
     let file_name = selected_asset
         .and_then(|a| a["name"].as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("wwm-overlay-{}.exe", latest_version));
+        .unwrap_or_else(|| format!("wwm-midi-project-{}.exe", latest_version));
 
-    let release_url = json["html_url"]
-        .as_str()
-        .unwrap_or("https://github.com/SnowiyQ/Where-Winds-Meet-Midi-Player/releases/latest")
-        .to_string();
+    let release_url = json["html_url"].as_str().unwrap_or("").to_string();
 
     match download_url {
         Some(url) => Ok(Some(UpdateInfo {
@@ -2514,7 +2513,7 @@ async fn download_update(download_url: String, file_name: String) -> Result<Stri
     app_log!("[UPDATE] Saving to: {:?}", download_path);
 
     let response = ureq::get(&download_url)
-        .set("User-Agent", "WWM-Overlay")
+        .set("User-Agent", "WWM-Midi-Project")
         .call()
         .map_err(|e| format!("Failed to download update: {}", e))?;
 
@@ -3144,7 +3143,7 @@ async fn install_update(zip_path: String, app_handle: AppHandle) -> Result<(), S
     let script_content = if update_ext == "zip" {
         format!(
             r#"@echo off
-echo Updating WWM Overlay...
+echo Updating WWM Midi Project...
 timeout /t 2 /nobreak > nul
 powershell -Command "Expand-Archive -Path '{}' -DestinationPath '{}' -Force"
 echo Update complete! Restarting...
@@ -3158,7 +3157,7 @@ del "%~f0"
     } else if update_ext == "exe" {
         format!(
             r#"@echo off
-echo Updating WWM Overlay...
+echo Updating WWM Midi Project...
 timeout /t 2 /nobreak > nul
 copy /Y "{}" "{}"
 echo Update complete! Restarting...
