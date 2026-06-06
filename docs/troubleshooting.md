@@ -40,7 +40,7 @@ Run:
 
 ## Online Library Sharing Cannot Connect
 
-Packaged builds only allow documented discovery and peer endpoints through the Tauri CSP. If a custom discovery server is needed, add that trusted origin to `connect-src` before building a release.
+Packaged builds allow HTTPS and WSS discovery or peer endpoints through the Tauri CSP. If the CSP is tightened later, keep custom discovery servers and peer endpoints in `connect-src` before building a release.
 
 ## Album Audit Fails
 
