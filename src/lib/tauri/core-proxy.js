@@ -3,7 +3,11 @@ import { logUiAction } from '../utils/uiActionLogger.js'
 
 const skippedCommands = new Set()
 const isTestEnv = (typeof process !== 'undefined' && process.env.NODE_ENV === 'test') || import.meta.env?.VITEST === true
-const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI__)
+const isTauri = typeof window !== 'undefined' && (
+  Boolean(window.__TAURI_INTERNALS__) ||
+  Boolean(window.__TAURI__) ||
+  typeof window.ipc === 'function'
+)
 
 function logSkip(command) {
   if (!command || isTestEnv || skippedCommands.has(command)) {

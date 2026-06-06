@@ -1,25 +1,35 @@
-name: Build and Release
+name: Release Build
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Optional tag name to publish as a GitHub release. Leave empty for artifact-only package testing.'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark a manually dispatched release as a prerelease.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest]
+  verify:
+    name: CI verification
+    uses: ./.github/workflows/ci.yml
 
-    runs-on: ${{ matrix.platform }}
+  package:
+    name: Release package
+    needs: verify
+    runs-on: windows-latest
     permissions:
       contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -36,25 +46,10 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run frontend tests
-        run: bun run test
-
-      - name: Audit album metadata
-        run: bun run album:audit
-
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-
-      - name: Check Rust build
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
-
-      - name: Run Rust clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+        run: .\scripts\dev.cmd bun install --frozen-lockfile
 
       - name: Build Tauri app
-        run: bun run tauri-build
+        run: .\scripts\dev.cmd bun run tauri-build
 
       - name: Create album folder next to executable
         shell: pwsh
@@ -89,10 +84,12 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name != '')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
           files: |
             src-tauri/target/release/wwm-midi-project.exe
             src-tauri/target/release/checksums.sha256
@@ -102,10 +99,10 @@ jobs:
             ## Installation
             1. Download the installer or `wwm-midi-project.exe`.
             2. Keep an `album` folder next to the executable for MIDI files.
-            3. Run the app as Administrator when keyboard input needs to reach the game.
+            3. Run the app as Administrator when keyboard input needs to reach elevated targets.
 
             ## Integrity
             Verify downloads with `checksums.sha256`.
 
             ## What's New
-            See commits for changes in this release.
+            See `CHANGELOG.md` and commits for changes in this release.

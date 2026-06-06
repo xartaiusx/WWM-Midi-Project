@@ -14,7 +14,7 @@ The project focuses on practical local use:
 
 The app currently includes:
 
-- Desktop player built with a Tauri, Rust, and Svelte stack.
+- Desktop player built with Tauri, Rust, Svelte, and Bun.
 - Library, queue, favorites, playlists, stats, and settings views.
 - Global playback shortcuts with configurable keybindings.
 - 21-key natural-note and 36-key chromatic playback modes.
@@ -28,9 +28,9 @@ The app currently includes:
   - `balanced`: moderate harmony and cleanup.
   - `debug_raw`: minimal cleanup for diagnostics.
 - Desktop shortcut scripts that point to the latest rebuilt release executable.
-- CI workflows for tests, Rust checks, builds, checksums, and release artifacts.
+- CI workflows for frontend checks, album auditing, Rust checks, package builds, checksums, and release artifacts.
 
-## What Is Local-Only
+## Local-Only Files
 
 The repository intentionally ignores generated and private runtime files:
 
@@ -146,16 +146,25 @@ Generated conversion reports are saved beside the optimized MIDI when possible.
 
 ```text
 .
-├── .github/                  CI and release workflows
-├── Diagnostics/              Local diagnostic tooling
-├── scripts/                  Windows setup, build, audit, shortcut, and helper scripts
-├── src/                      Svelte frontend
-├── src-tauri/                Rust/Tauri desktop backend
-├── tools/audio-to-wwm-midi/  Audio recording, transcription, and MIDI optimization tools
-├── album-manifest.json       Public album audit policy
-├── package.json              Bun scripts and frontend dependencies
-└── README.md                 Project overview
+|-- .github/                  CI and release workflows
+|-- Diagnostics/              Local diagnostic tooling
+|-- docs/                     Project, release, album, and maintenance notes
+|-- scripts/                  Windows setup, build, audit, shortcut, and helper scripts
+|-- src/                      Svelte frontend
+|-- src-tauri/                Rust/Tauri desktop backend
+|-- tools/audio-to-wwm-midi/  Audio recording, transcription, and MIDI optimization tools
+|-- album-manifest.json       Public album audit policy
+|-- package.json              Bun scripts and frontend dependencies
+`-- README.md                 Project overview
 ```
+
+## Documentation
+
+- [Album audit policy](docs/album-audit.md)
+- [Audio-to-MIDI workflow](docs/audio-to-midi.md)
+- [Release process](docs/release-process.md)
+- [Repository maintenance](docs/repository-maintenance.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## Build Notes
 

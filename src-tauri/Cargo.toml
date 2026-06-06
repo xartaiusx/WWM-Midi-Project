@@ -2,7 +2,7 @@
 name = "wwm-midi-project"
 version = "1.1.9"
 description = "Local MIDI player and creator for WWM Midi Project"
-authors = ["you"]
+authors = ["WWM Midi Project"]
 edition = "2021"
 
 [build-dependencies]

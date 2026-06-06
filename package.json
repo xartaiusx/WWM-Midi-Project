@@ -3,6 +3,7 @@
   "version": "1.1.9",
   "module": "index.ts",
   "type": "module",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "vite",
@@ -41,11 +42,6 @@
   },
   "peerDependencies": {
     "typescript": "^5"
-  },
-  "overrides": {
-    "svelte-i18n": {
-      "esbuild": "^0.27.7"
-    }
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

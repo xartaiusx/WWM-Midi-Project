@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wwm-midi-project.local/schemas/album-manifest.schema.json",
+  "title": "WWM Midi Project album manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "albumDir",
+    "allowedStatuses",
+    "allowExactDuplicateHashes",
+    "allowNormalizedDuplicates",
+    "entries"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "albumDir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowedStatuses": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/status"
+      }
+    },
+    "allowExactDuplicateHashes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "allowNormalizedDuplicates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "duplicateKey",
+          "reason"
+        ],
+        "properties": {
+          "duplicateKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "approved-sourceable",
+        "needs-user-source",
+        "needs-license",
+        "rejected"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "file"
+          ]
+        },
+        {
+          "required": [
+            "filename"
+          ]
+        }
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "artist": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "sourceNote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string"
+        },
+        "licenseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "duplicateKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "approved-sourceable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "sourceUrl"
+                ]
+              },
+              {
+                "required": [
+                  "sourceNote"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
