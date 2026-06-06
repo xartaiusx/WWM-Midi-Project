@@ -1,8 +1,16 @@
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $DevTools = Join-Path $RepoRoot '.dev-tools'
 
-$env:RUSTUP_HOME = Join-Path $DevTools 'rustup'
-$env:CARGO_HOME = Join-Path $DevTools 'cargo'
+$LocalRustupHome = Join-Path $DevTools 'rustup'
+$LocalCargoHome = Join-Path $DevTools 'cargo'
+
+if (Test-Path $LocalRustupHome) {
+  $env:RUSTUP_HOME = $LocalRustupHome
+}
+
+if (Test-Path $LocalCargoHome) {
+  $env:CARGO_HOME = $LocalCargoHome
+}
 
 $gitPaths = @(
   (Join-Path $env:ProgramFiles 'Git\cmd'),
@@ -18,7 +26,7 @@ $localPaths = @($gitPaths | Where-Object { Test-Path $_ })
 $localPaths += @($bunPaths | Where-Object { Test-Path $_ })
 $localPaths += @(
   (Join-Path $DevTools 'node'),
-  (Join-Path $env:CARGO_HOME 'bin')
+  ($(if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME 'bin' }))
 ) | Where-Object { Test-Path $_ }
 
 $env:PATH = ($localPaths + $env:PATH) -join ';'

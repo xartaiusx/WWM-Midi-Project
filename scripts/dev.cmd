@@ -3,12 +3,18 @@ setlocal
 
 set "REPO_ROOT=%~dp0.."
 set "DEV_TOOLS=%REPO_ROOT%\.dev-tools"
-set "RUSTUP_HOME=%DEV_TOOLS%\rustup"
-set "CARGO_HOME=%DEV_TOOLS%\cargo"
+set "LOCAL_RUSTUP_HOME=%DEV_TOOLS%\rustup"
+set "LOCAL_CARGO_HOME=%DEV_TOOLS%\cargo"
+if exist "%LOCAL_RUSTUP_HOME%" set "RUSTUP_HOME=%LOCAL_RUSTUP_HOME%"
+if exist "%LOCAL_CARGO_HOME%" set "CARGO_HOME=%LOCAL_CARGO_HOME%"
 set "BUN_WINGET=%LocalAppData%\Microsoft\WinGet\Packages\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\bun-windows-x64"
 set "BUN_HOME=%UserProfile%\.bun\bin"
 
-set "PATH=%ProgramFiles%\Git\cmd;%LocalAppData%\Programs\Git\cmd;%DEV_TOOLS%\node;%CARGO_HOME%\bin;%BUN_HOME%;%BUN_WINGET%;%PATH%"
+if defined CARGO_HOME (
+  set "PATH=%ProgramFiles%\Git\cmd;%LocalAppData%\Programs\Git\cmd;%DEV_TOOLS%\node;%CARGO_HOME%\bin;%BUN_HOME%;%BUN_WINGET%;%PATH%"
+) else (
+  set "PATH=%ProgramFiles%\Git\cmd;%LocalAppData%\Programs\Git\cmd;%DEV_TOOLS%\node;%BUN_HOME%;%BUN_WINGET%;%PATH%"
+)
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" (
