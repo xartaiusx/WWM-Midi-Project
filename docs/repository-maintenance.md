@@ -34,6 +34,10 @@ Dependabot should keep grouped weekly updates for:
 
 Review grouped updates with the normal verification commands before merging.
 
+## Recovery Readiness
+
+Use `.\scripts\dev.cmd bun run recovery:check` before ending a development session or after pushing important work. The check verifies that the active working folder is on `main`, tracks `origin/main`, has no uncommitted source changes, includes the expected recovery-critical files, and is not accidentally committing ignored local-only outputs.
+
 ## Maintainability Backlog
 
 The largest Rust and Svelte modules should be split gradually without behavior changes:

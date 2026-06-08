@@ -164,6 +164,7 @@ Generated conversion reports are saved beside the optimized MIDI when possible.
 - [Audio-to-MIDI workflow](docs/audio-to-midi.md)
 - [Release process](docs/release-process.md)
 - [Repository maintenance](docs/repository-maintenance.md)
+- [Recovery and redownload](docs/recovery.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Build Notes

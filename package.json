@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "coverage:check": "bun scripts/check-coverage.js",
+    "recovery:check": "powershell -ExecutionPolicy Bypass -File scripts/check-recovery-readiness.ps1",
     "album:audit": "bun scripts/album-audit.mjs",
     "shortcut:create": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
     "shortcut:verify": "powershell -ExecutionPolicy Bypass -File scripts/shortcut-verify.ps1",

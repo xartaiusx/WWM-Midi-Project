@@ -11,6 +11,7 @@ Use the repository root and route commands through the Windows helper:
 .\scripts\dev.cmd bun run test
 .\scripts\dev.cmd bun run build
 .\scripts\dev.cmd bun run album:audit
+.\scripts\dev.cmd bun run recovery:check
 ```
 
 Use Bun for package scripts and installs. Do not add npm lifecycle hooks or npm-only instructions.
@@ -34,6 +35,7 @@ Before opening a pull request, run the focused checks for the changed area. For 
 .\scripts\dev.cmd bun run build
 .\scripts\dev.cmd bun run album:audit
 .\scripts\dev.cmd bun run shortcut:verify
+.\scripts\dev.cmd bun run recovery:check
 .\scripts\dev.cmd cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 .\scripts\dev.cmd cargo check --manifest-path src-tauri/Cargo.toml --locked
 .\scripts\dev.cmd cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
