@@ -178,7 +178,13 @@ pub fn get_modifier_delay() -> u64 {
 }
 
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, WPARAM};
+use windows::core::PWSTR;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT, WPARAM};
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
@@ -186,12 +192,52 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextW, PostMessageW,
-    SetForegroundWindow, ShowWindow, SW_RESTORE, WM_KEYDOWN, WM_KEYUP,
+    EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    PostMessageW, SetForegroundWindow, ShowWindow, SW_RESTORE, WM_KEYDOWN, WM_KEYUP,
 };
 
+const TARGET_WINDOW_KEYWORDS: [&str; 3] = ["where winds meet", "wwm", "wwm.exe"];
+const TARGET_PROCESS_NAMES: [&str; 1] = ["wwm.exe"];
+const EXCLUDED_WINDOW_KEYWORDS: [&str; 18] = [
+    "midi player",
+    "overlay",
+    "discord",
+    "telegram",
+    "slack",
+    "teams",
+    "notepad",
+    "visual studio",
+    "vscode",
+    "google chrome",
+    "mozilla firefox",
+    "microsoft edge",
+    "opera",
+    "brave",
+    "vivaldi",
+    "safari",
+    "youtube",
+    "twitch",
+];
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TargetWindowDiagnostics {
+    pub found: bool,
+    pub title: Option<String>,
+    pub process_name: Option<String>,
+    pub process_path: Option<String>,
+    pub matched_by: Option<String>,
+    pub is_focused: bool,
+    pub input_mode: String,
+}
+
+#[derive(Debug, Clone)]
 #[cfg(target_os = "windows")]
-const TARGET_WINDOW_KEYWORDS: [&str; 2] = ["wwm", "wwm.exe"];
+struct TargetWindowInfo {
+    title: String,
+    process_name: Option<String>,
+    process_path: Option<String>,
+    matched_by: String,
+}
 
 // Custom window keywords added by user
 use std::sync::RwLock;
@@ -216,70 +262,136 @@ struct EnumData {
     target: Option<HWND>,
 }
 
+fn is_excluded_window_title(title_lower: &str) -> bool {
+    EXCLUDED_WINDOW_KEYWORDS
+        .iter()
+        .any(|keyword| title_lower.contains(keyword))
+}
+
+fn process_name_from_path(path: &str) -> Option<String> {
+    path.rsplit(['\\', '/'])
+        .find(|part| !part.trim().is_empty())
+        .map(|name| name.to_lowercase())
+}
+
+fn match_target_metadata(
+    title: &str,
+    process_name: Option<&str>,
+    process_path: Option<&str>,
+    custom_keywords: &[String],
+) -> Option<String> {
+    let title_lower = title.to_lowercase();
+    if title_lower.trim().is_empty() || is_excluded_window_title(&title_lower) {
+        return None;
+    }
+
+    if let Some(keyword) = TARGET_WINDOW_KEYWORDS
+        .iter()
+        .find(|keyword| title_lower.contains(*keyword))
+    {
+        return Some(format!("title:{keyword}"));
+    }
+
+    let normalized_process = process_name
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| name.to_lowercase())
+        .or_else(|| process_path.and_then(process_name_from_path));
+
+    if let Some(process) = normalized_process {
+        if TARGET_PROCESS_NAMES.iter().any(|target| process == *target) {
+            return Some(format!("process:{process}"));
+        }
+    }
+
+    custom_keywords
+        .iter()
+        .map(|keyword| keyword.trim().to_lowercase())
+        .find(|keyword| !keyword.is_empty() && title_lower.contains(keyword))
+        .map(|keyword| format!("custom:{keyword}"))
+}
+
 #[cfg(target_os = "windows")]
-fn matches_target_window(hwnd: HWND, log: bool) -> bool {
+fn get_window_title(hwnd: HWND) -> Option<String> {
     let mut title = [0u16; 256];
     let len = unsafe { GetWindowTextW(hwnd, &mut title) };
     if len <= 0 {
-        return false;
+        return None;
     }
-    let title_string = String::from_utf16_lossy(&title[..len as usize]).to_lowercase();
+    Some(String::from_utf16_lossy(&title[..len as usize]))
+}
 
-    // Skip our own window and common apps that should never receive keys
-    // Also skip browsers (they may have game-related titles from YouTube/Twitch/etc)
-    if title_string.contains("midi player")
-        || title_string.contains("overlay")
-        || title_string.contains("discord")
-        || title_string.contains("telegram")
-        || title_string.contains("slack")
-        || title_string.contains("teams")
-        || title_string.contains("notepad")
-        || title_string.contains("visual studio")
-        || title_string.contains("vscode")
-        // Browsers - exclude to prevent matching YouTube/Twitch tabs with game titles
-        || title_string.contains("google chrome")
-        || title_string.contains("mozilla firefox")
-        || title_string.contains("microsoft edge")
-        || title_string.contains("opera")
-        || title_string.contains("brave")
-        || title_string.contains("vivaldi")
-        || title_string.contains("safari")
-        || title_string.contains("youtube")
-        || title_string.contains("twitch")
-    {
-        return false;
-    }
-
-    // Check built-in keywords
-    let matched_keyword = TARGET_WINDOW_KEYWORDS
-        .iter()
-        .find(|keyword| title_string.contains(*keyword));
-    if let Some(keyword) = matched_keyword {
-        if log {
-            println!(
-                "[WINDOW] Found matching window: '{}' (matched: '{}') hwnd={:?}",
-                title_string, keyword, hwnd.0
-            );
+#[cfg(target_os = "windows")]
+fn get_window_process_info(hwnd: HWND) -> (Option<String>, Option<String>) {
+    unsafe {
+        let mut process_id = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        if process_id == 0 {
+            return (None, None);
         }
-        return true;
-    }
 
-    // Check custom keywords
-    if let Ok(custom) = CUSTOM_WINDOW_KEYWORDS.read() {
-        for keyword in custom.iter() {
-            if !keyword.is_empty() && title_string.contains(&keyword.to_lowercase()) {
-                if log {
-                    println!(
-                        "[WINDOW] Found matching window: '{}' (custom: '{}') hwnd={:?}",
-                        title_string, keyword, hwnd.0
-                    );
-                }
-                return true;
+        let process_handle =
+            match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, BOOL(0), process_id) {
+                Ok(handle) => handle,
+                Err(_) => return (None, None),
+            };
+
+        let mut buffer = vec![0u16; 32768];
+        let mut size = buffer.len() as u32;
+        let process_path = QueryFullProcessImageNameW(
+            process_handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        )
+        .ok()
+        .and_then(|_| {
+            if size == 0 {
+                None
+            } else {
+                Some(String::from_utf16_lossy(&buffer[..size as usize]))
             }
-        }
+        });
+
+        let _ = CloseHandle(process_handle);
+        let process_name = process_path.as_deref().and_then(process_name_from_path);
+
+        (process_name, process_path)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_target_window_info(hwnd: HWND, log: bool) -> Option<TargetWindowInfo> {
+    let title = get_window_title(hwnd)?;
+    let (process_name, process_path) = get_window_process_info(hwnd);
+    let custom_keywords = get_custom_window_keywords();
+    let matched_by = match_target_metadata(
+        &title,
+        process_name.as_deref(),
+        process_path.as_deref(),
+        &custom_keywords,
+    )?;
+
+    if log {
+        println!(
+            "[WINDOW] Found matching window: '{}' process='{}' matched_by='{}' hwnd={:?}",
+            title.to_lowercase(),
+            process_name.as_deref().unwrap_or("unknown"),
+            matched_by,
+            hwnd.0
+        );
     }
 
-    false
+    Some(TargetWindowInfo {
+        title,
+        process_name,
+        process_path,
+        matched_by,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn matches_target_window(hwnd: HWND, log: bool) -> bool {
+    get_target_window_info(hwnd, log).is_some()
 }
 
 #[cfg(target_os = "windows")]
@@ -492,6 +604,14 @@ fn modifier_to_vk(modifier: Modifier) -> Option<u32> {
 /// Reset modifier counts (no-op now, kept for compatibility)
 pub fn reset_modifier_counts() {
     // No longer using reference counting
+}
+
+fn input_mode_label() -> String {
+    if get_send_input_mode() {
+        "SendInput".to_string()
+    } else {
+        "PostMessage".to_string()
+    }
 }
 
 // ============ SendInput-based functions (for cloud gaming) ============
@@ -775,6 +895,38 @@ pub fn is_game_window_found() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+pub fn get_target_window_diagnostics() -> TargetWindowDiagnostics {
+    let info = find_game_window().and_then(|hwnd| get_target_window_info(hwnd, false));
+    let is_focused = unsafe {
+        let hwnd = GetForegroundWindow();
+        !hwnd.0.is_null() && matches_target_window(hwnd, false)
+    };
+
+    TargetWindowDiagnostics {
+        found: info.is_some(),
+        title: info.as_ref().map(|i| i.title.clone()),
+        process_name: info.as_ref().and_then(|i| i.process_name.clone()),
+        process_path: info.as_ref().and_then(|i| i.process_path.clone()),
+        matched_by: info.as_ref().map(|i| i.matched_by.clone()),
+        is_focused,
+        input_mode: input_mode_label(),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_target_window_diagnostics() -> TargetWindowDiagnostics {
+    TargetWindowDiagnostics {
+        found: true,
+        title: Some("Non-Windows target".to_string()),
+        process_name: None,
+        process_path: None,
+        matched_by: Some("platform:non-windows".to_string()),
+        is_focused: true,
+        input_mode: input_mode_label(),
+    }
+}
+
+#[cfg(target_os = "windows")]
 pub fn is_wwm_focused() -> Result<bool, String> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -816,4 +968,64 @@ pub fn focus_black_desert_window() -> Result<(), String> {
 #[cfg(not(target_os = "windows"))]
 pub fn focus_black_desert_window() -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::match_target_metadata;
+
+    #[test]
+    fn where_winds_meet_title_matches() {
+        let custom = Vec::new();
+        assert_eq!(
+            match_target_metadata("Where Winds Meet", None, None, &custom).as_deref(),
+            Some("title:where winds meet")
+        );
+    }
+
+    #[test]
+    fn wwm_process_matches_when_title_changes() {
+        let custom = Vec::new();
+        assert_eq!(
+            match_target_metadata("Unexpected Game Window", Some("wwm.exe"), None, &custom)
+                .as_deref(),
+            Some("process:wwm.exe")
+        );
+    }
+
+    #[test]
+    fn wwm_process_path_matches_when_name_is_missing() {
+        let custom = Vec::new();
+        assert_eq!(
+            match_target_metadata(
+                "Unexpected Game Window",
+                None,
+                Some(r"C:\Program Files (x86)\Steam\steamapps\common\Where Winds Meet\wwm.exe"),
+                &custom,
+            )
+            .as_deref(),
+            Some("process:wwm.exe")
+        );
+    }
+
+    #[test]
+    fn midi_player_window_does_not_match_itself() {
+        let custom = Vec::new();
+        assert_eq!(
+            match_target_metadata("WWM MIDI Player", None, None, &custom),
+            None
+        );
+    }
+
+    #[test]
+    fn browser_and_chat_titles_do_not_match_game_keywords() {
+        let custom = Vec::new();
+        for title in [
+            "Where Winds Meet - Google Chrome",
+            "Where Winds Meet Guild - Microsoft Edge",
+            "Where Winds Meet voice chat - Discord",
+        ] {
+            assert_eq!(match_target_metadata(title, None, None, &custom), None);
+        }
+    }
 }

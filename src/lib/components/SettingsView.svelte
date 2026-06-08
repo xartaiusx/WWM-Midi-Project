@@ -87,6 +87,17 @@
   let isChangingPath = false;
   let customWindowKeywords = [];
   let newKeyword = "";
+  let gameDiagnostics = {
+    found: false,
+    title: null,
+    process_name: null,
+    process_path: null,
+    matched_by: null,
+    is_focused: false,
+    input_mode: "PostMessage",
+    config_path: null,
+  };
+  let gameDiagnosticsError = "";
   let searchQuery = "";
 
   // Keybindings
@@ -218,6 +229,8 @@
       console.error("Failed to get custom window keywords:", e);
     }
 
+    await refreshGameDiagnostics();
+
     // Load keybindings
     try {
       keybindings = await invoke('cmd_get_keybindings');
@@ -308,6 +321,7 @@
     cloudMode = !cloudMode;
     try {
       await invoke('set_cloud_mode', { enabled: cloudMode });
+      await refreshGameDiagnostics();
     } catch (e) {
       console.error("Failed to set cloud mode:", e);
       cloudMode = !cloudMode; // revert on error
@@ -436,6 +450,7 @@
     if (!customWindowKeywords.includes(keyword)) {
       customWindowKeywords = [...customWindowKeywords, keyword];
       await invoke('set_custom_window_keywords', { keywords: customWindowKeywords });
+      await refreshGameDiagnostics();
     }
     newKeyword = "";
   }
@@ -443,6 +458,35 @@
   async function removeWindowKeyword(keyword) {
     customWindowKeywords = customWindowKeywords.filter(k => k !== keyword);
     await invoke('set_custom_window_keywords', { keywords: customWindowKeywords });
+    await refreshGameDiagnostics();
+  }
+
+  async function refreshGameDiagnostics() {
+    try {
+      const diagnostics = await invoke('get_game_window_diagnostics');
+      gameDiagnostics = {
+        ...gameDiagnostics,
+        ...(diagnostics || {}),
+        found: Boolean(diagnostics?.found),
+      };
+      gameDiagnosticsError = "";
+    } catch (e) {
+      gameDiagnostics = {
+        ...gameDiagnostics,
+        found: false,
+        title: null,
+        process_name: null,
+        process_path: null,
+        matched_by: null,
+        is_focused: false,
+      };
+      gameDiagnosticsError = e?.message || String(e);
+      console.error("Failed to get game diagnostics:", e);
+    }
+  }
+
+  function targetDiagnosticLabel() {
+    return gameDiagnostics.title || gameDiagnostics.process_name || "No target detected";
   }
 
   async function handleSpamTest() {
@@ -644,6 +688,54 @@
         {$t("settings.window.description")}
       </p>
 
+      <div class="mb-4 space-y-2 text-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-xs text-white/40">Detected target</p>
+            <p class="text-white truncate" title={targetDiagnosticLabel()}>
+              {targetDiagnosticLabel()}
+            </p>
+          </div>
+          <span class="px-2 py-1 rounded text-xs font-medium {gameDiagnostics.found ? 'bg-[#1db954]/15 text-[#1db954]' : 'bg-red-500/15 text-red-300'}">
+            {gameDiagnostics.found ? "Found" : "Not found"}
+          </span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-xs text-white/60">
+          <div>
+            <span class="text-white/35">Process</span>
+            <p class="truncate" title={gameDiagnostics.process_path || gameDiagnostics.process_name || "Unknown"}>
+              {gameDiagnostics.process_name || "Unknown"}
+            </p>
+          </div>
+          <div>
+            <span class="text-white/35">Input</span>
+            <p>{gameDiagnostics.input_mode || "PostMessage"}</p>
+          </div>
+          <div>
+            <span class="text-white/35">Focus</span>
+            <p>{gameDiagnostics.is_focused ? "Focused" : "Background"}</p>
+          </div>
+          <div>
+            <span class="text-white/35">Matched by</span>
+            <p class="truncate" title={gameDiagnostics.matched_by || "None"}>
+              {gameDiagnostics.matched_by || "None"}
+            </p>
+          </div>
+        </div>
+
+        {#if gameDiagnosticsError}
+          <p class="text-xs text-red-300 truncate" title={gameDiagnosticsError}>{gameDiagnosticsError}</p>
+        {/if}
+
+        <button
+          class="text-xs text-white/60 hover:text-white transition-colors"
+          onclick={refreshGameDiagnostics}
+        >
+          Refresh detection
+        </button>
+      </div>
+
       <!-- Add new keyword -->
       <div class="flex gap-2 mb-3">
         <input
@@ -686,7 +778,7 @@
       <div>
         <p class="text-xs text-white/40 mb-2">{$t("settings.window.builtIn")}</p>
         <div class="flex flex-wrap gap-1.5">
-          {#each ['WWM', 'wwm.exe'] as builtin}
+          {#each ['Where Winds Meet', 'WWM', 'wwm.exe'] as builtin}
             <span class="px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/60">{builtin}</span>
           {/each}
         </div>

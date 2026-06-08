@@ -1170,6 +1170,21 @@ async fn is_game_window_found() -> Result<bool, String> {
 }
 
 #[tauri::command]
+async fn get_game_window_diagnostics() -> Result<serde_json::Value, String> {
+    let diagnostics = keyboard::get_target_window_diagnostics();
+    let mut value = serde_json::to_value(diagnostics).map_err(|e| e.to_string())?;
+
+    if let serde_json::Value::Object(ref mut object) = value {
+        let config_path = get_config_path()
+            .ok()
+            .map(|path| path.to_string_lossy().to_string());
+        object.insert("config_path".to_string(), serde_json::json!(config_path));
+    }
+
+    Ok(value)
+}
+
+#[tauri::command]
 async fn set_modifier_delay(delay_ms: u64) -> Result<(), String> {
     keyboard::set_modifier_delay(delay_ms);
     println!("Modifier delay set to: {}ms", delay_ms);
@@ -3692,6 +3707,7 @@ fn main() {
             tap_key,
             is_game_focused,
             is_game_window_found,
+            get_game_window_diagnostics,
             test_all_keys,
             test_all_keys_36,
             spam_test,

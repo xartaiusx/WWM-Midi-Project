@@ -23,6 +23,16 @@
 
   // Game window detection
   let gameFound = false;
+  let gameDiagnostics = {
+    found: false,
+    title: null,
+    process_name: null,
+    process_path: null,
+    matched_by: null,
+    is_focused: false,
+    input_mode: "PostMessage",
+    config_path: null,
+  };
   let checkInterval;
 
   // Always on top toggle
@@ -145,9 +155,15 @@
 
   async function checkGameWindow() {
     try {
-      const found = await invoke('is_game_window_found');
+      const diagnostics = await invoke('get_game_window_diagnostics');
+      gameDiagnostics = {
+        ...gameDiagnostics,
+        ...(diagnostics || {}),
+        found: Boolean(diagnostics?.found),
+      };
+      const found = gameDiagnostics.found;
       if (found !== gameFound) {
-        console.debug('[diagnostics] game window detection changed', { found });
+        console.debug('[diagnostics] game window detection changed', gameDiagnostics);
       }
       gameFound = found;
     } catch {
@@ -155,7 +171,49 @@
         console.debug('[diagnostics] game window detection changed', { found: false, error: true });
       }
       gameFound = false;
+      gameDiagnostics = {
+        ...gameDiagnostics,
+        found: false,
+        title: null,
+        process_name: null,
+        process_path: null,
+        matched_by: null,
+        is_focused: false,
+      };
     }
+  }
+
+  function gameTargetLabel() {
+    return gameDiagnostics.title || gameDiagnostics.process_name || "target";
+  }
+
+  function gameStatusSummary() {
+    if (!gameFound) {
+      return "Target: not found";
+    }
+
+    const focus = gameDiagnostics.is_focused ? "focused" : "background";
+    return `Target: ${gameTargetLabel()} - ${gameDiagnostics.input_mode || "PostMessage"} - ${focus}`;
+  }
+
+  function gameStatusTitle() {
+    if (!gameFound) {
+      return "Game target not found. Check Settings > Window Detection.";
+    }
+
+    const lines = [
+      `Target: ${gameTargetLabel()}`,
+      `Process: ${gameDiagnostics.process_name || "unknown"}`,
+      `Matched by: ${gameDiagnostics.matched_by || "unknown"}`,
+      `Input mode: ${gameDiagnostics.input_mode || "PostMessage"}`,
+      `Focus: ${gameDiagnostics.is_focused ? "focused" : "background"}`,
+    ];
+
+    if (gameDiagnostics.config_path) {
+      lines.push(`Config: ${gameDiagnostics.config_path}`);
+    }
+
+    return lines.join("\n");
   }
 
   // Check every 2 seconds
@@ -906,7 +964,7 @@
           <div class="flex items-center gap-4 w-64">
             <div
               class="relative w-12 h-12 rounded bg-white/5 flex items-center justify-center flex-shrink-0"
-              title={gameFound ? $t("common.gameFound") : $t("common.gameNotFound")}
+              title={gameStatusTitle()}
             >
               {#if $currentFile}
                 <Icon icon="mdi:music-note" class="w-6 h-6 text-[#1db954]" />
@@ -923,6 +981,9 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-semibold truncate text-white/90">
                 {filename($currentFile, $t("player.noTrackSelected"))}
+              </p>
+              <p class="text-[10px] text-white/45 truncate" title={gameStatusTitle()}>
+                {gameStatusSummary()}
               </p>
               <p class="text-xs text-white/50 truncate">
                 {#if $libraryPlayMode}
