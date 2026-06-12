@@ -4,6 +4,16 @@ node_modules
 
 *.mid
 *.diff
+.local-bard-catalog.json
+.local-bard-source-ledger.json
+.local-mainstream-midi-ledger.json
+.local-title-cleanup-report.json
+.local-title-cleanup-plan.csv
+.local-title-cleanup-backup-*.json
+.local-title-review-suggestions.csv
+.local-title-review-suggestions.json
+.local-title-review-web-cache.json
+.local-title-review-backup-*.json
 
 # output
 out

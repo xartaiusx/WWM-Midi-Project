@@ -42,7 +42,7 @@ The repository intentionally ignores generated and private runtime files:
 - generated `.mid` files
 - logs and cache outputs
 
-Keep copyrighted, personal, recorded, or experimental songs out of Git unless their source and license are documented and approved for publishing.
+Keep copyrighted, personal, recorded, or experimental songs out of Git unless their source and license are documented and approved for publishing. Use the local Bard MIDI miner when expanding the private runtime album from bard-focused repositories.
 
 The default runtime album folder is:
 
@@ -142,6 +142,49 @@ scripts\audio-to-midi.cmd create --record 30 --name "Recorded Clip" --profile ha
 
 Generated conversion reports are saved beside the optimized MIDI when possible.
 
+## Local Bard MIDI Expansion
+
+Discover local-only bard arrangements:
+
+```cmd
+scripts\dev.cmd bun run bard:discover-bmp -- --ensemble solo --pages all
+scripts\dev.cmd bun run bard:discover-ffxivbard -- --focused-genres --pages all
+```
+
+Download a validated BMP solo batch into the ignored runtime album:
+
+```cmd
+scripts\dev.cmd bun run bard:download -- --source bmp --limit 250
+scripts\dev.cmd bun run bard:verify
+```
+
+Continue auditing the full local catalog in small verified batches:
+
+```cmd
+scripts\dev.cmd bun run bard:audit-status
+scripts\dev.cmd bun run bard:audit-batch -- --source bmp --max-downloads 100
+scripts\dev.cmd bun run bard:verify
+scripts\dev.cmd bun run album:audit
+```
+
+Clean local album titles so the app shows `Artist - Song` for safe rows:
+
+```cmd
+scripts\dev.cmd bun run bard:title-audit
+scripts\dev.cmd bun run bard:title-apply
+scripts\dev.cmd bun run bard:verify
+scripts\dev.cmd bun run album:audit
+```
+
+Generate web-assisted suggestions for rows that still need manual title review:
+
+```cmd
+scripts\dev.cmd bun run bard:title-review-suggest
+scripts\dev.cmd bun run bard:title-review-apply -- --batch 1
+```
+
+See [Local Bard MIDI miner](docs/bard-midi-miner.md) for source notes and safeguards.
+
 ## Project Structure
 
 ```text
@@ -162,6 +205,7 @@ Generated conversion reports are saved beside the optimized MIDI when possible.
 
 - [Album audit policy](docs/album-audit.md)
 - [Audio-to-MIDI workflow](docs/audio-to-midi.md)
+- [Local Bard MIDI miner](docs/bard-midi-miner.md)
 - [Release process](docs/release-process.md)
 - [Repository maintenance](docs/repository-maintenance.md)
 - [Recovery and redownload](docs/recovery.md)
