@@ -1,0 +1,20 @@
+name: Security report
+description: Redirect sensitive reports to the private vulnerability workflow.
+title: "[Security]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not disclose vulnerability details in a public issue.
+
+        Use GitHub private vulnerability reporting instead:
+        https://github.com/xartaiusx/WWM-Midi-Project/security/advisories/new
+
+        If that private channel is unavailable, open a public issue with only a non-sensitive summary and state that details are withheld.
+  - type: checkboxes
+    id: acknowledgment
+    attributes:
+      label: Acknowledgment
+      options:
+        - label: I will use the private reporting path for sensitive vulnerability details.
+          required: true

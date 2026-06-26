@@ -1,5 +1,8 @@
 # WWM Midi Project
 
+[![CI](https://github.com/xartaiusx/WWM-Midi-Project/actions/workflows/ci.yml/badge.svg)](https://github.com/xartaiusx/WWM-Midi-Project/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/xartaiusx/WWM-Midi-Project/actions/workflows/codeql.yml/badge.svg)](https://github.com/xartaiusx/WWM-Midi-Project/actions/workflows/codeql.yml)
+
 WWM Midi Project is a Windows-first local MIDI player, library manager, and audio-to-MIDI creator for WWM-style music playback.
 
 The project focuses on practical local use:
@@ -52,12 +55,14 @@ src-tauri/target/release/album
 
 That folder is for local testing and release-time runtime content. It is not committed by default.
 
+Public releases do not include a curated MIDI song library. Keep an `album` folder next to the executable and add your own local `.mid` files with source/license tracking when files are intended for publication.
+
 ## Local Project Folder
 
 For a complete private working copy, keep the project folder at:
 
 ```text
-C:\Users\<you>\Documents\WWM Midi Project
+C:\Users\<you>\Documents\WWM-Midi-Project
 ```
 
 That local folder can include the repository, local toolchains, generated release builds, private MIDI files, recordings, and any local runtime album content needed to run the program.

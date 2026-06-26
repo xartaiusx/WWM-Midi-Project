@@ -3,7 +3,7 @@
 This project should have one active local working folder:
 
 ```text
-C:\Users\<you>\Documents\WWM Midi Project
+C:\Users\<you>\Documents\WWM-Midi-Project
 ```
 
 Use that folder for source edits, local toolchains, generated release builds, private MIDI tests, recordings, and runtime album content. Do not keep a second working clone with a similar name, because it becomes too easy to edit, build, or launch the wrong copy.
@@ -36,8 +36,8 @@ On a new Windows machine or after losing the local copy:
 
 ```powershell
 cd C:\Users\<you>\Documents
-git clone https://github.com/<your-github-username>/WWM-Midi-Project.git "WWM Midi Project"
-cd "WWM Midi Project"
+git clone https://github.com/<your-github-username>/WWM-Midi-Project.git "WWM-Midi-Project"
+cd "WWM-Midi-Project"
 .\scripts\dev.cmd bun install --frozen-lockfile
 .\scripts\setup-audio-midi.cmd
 .\scripts\audio-to-midi.cmd status
@@ -59,7 +59,7 @@ When Windows C++ build tools are available, also run:
 Before ending a development session:
 
 ```powershell
-cd "C:\Users\<you>\Documents\WWM Midi Project"
+cd "C:\Users\<you>\Documents\WWM-Midi-Project"
 git status --short --branch
 .\scripts\dev.cmd bun run test
 .\scripts\dev.cmd bun run build

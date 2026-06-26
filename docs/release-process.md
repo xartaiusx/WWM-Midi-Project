@@ -36,6 +36,8 @@ The release workflow builds the Windows app, creates the runtime `album` folder 
 
 Manual dispatch can publish a release when a tag name is supplied. Manual dispatch without a tag name is for artifact-only package testing.
 
+Release artifacts are attested through GitHub artifact attestations. The attestation covers the release executable, generated installers, and `checksums.sha256`.
+
 ## Release Notes
 
 Keep `CHANGELOG.md` current before tagging. Release notes should include:
@@ -43,4 +45,6 @@ Keep `CHANGELOG.md` current before tagging. Release notes should include:
 - Installation notes.
 - Administrator-rights reminder.
 - Integrity/checksum note.
+- Artifact attestation note.
+- Explicit reminder that no curated MIDI song library is included.
 - User-facing changes since the previous tag.

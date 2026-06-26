@@ -4,8 +4,25 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build(actions)"
     groups:
-      actions:
+      actions-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      actions-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+      actions-major:
+        applies-to: "version-updates"
+        update-types:
+          - "major"
         patterns:
           - "*"
 
@@ -13,8 +30,25 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build(npm)"
     groups:
-      frontend:
+      frontend-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      frontend-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+      frontend-major:
+        applies-to: "version-updates"
+        update-types:
+          - "major"
         patterns:
           - "*"
 
@@ -22,7 +56,24 @@ updates:
     directory: "/src-tauri"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build(cargo)"
     groups:
-      rust:
+      rust-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      rust-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+      rust-major:
+        applies-to: "version-updates"
+        update-types:
+          - "major"
         patterns:
           - "*"

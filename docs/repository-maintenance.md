@@ -4,25 +4,41 @@ This repository follows a solo-public maintenance model: practical for local dev
 
 ## Branch Protection
 
-Use a GitHub ruleset for `main` when the repository is ready for enforced checks.
+Use a light GitHub ruleset for `main` so the public branch stays recoverable without making solo maintenance heavy.
 
-Recommended required status checks:
+Required status checks:
 
 - `Windows checks`
-- `Release package` for release tags only, if tag protection is enabled.
 
-Recommended rules:
+Rules:
 
-- Require a pull request before merging when practical.
 - Require status checks to pass.
 - Block force pushes to `main`.
 - Block deletions of `main`.
+- Allow repository admins to bypass for emergency owner-maintained fixes.
+
+Do not require pull requests for every owner change unless the project grows beyond the current solo-public maintenance model.
+
+## Public Repository Settings
+
+Recommended public metadata:
+
+- Description: `Windows-first Tauri/Svelte/Rust MIDI player and local album manager for WWM-style playback.`
+- Topics: `tauri`, `svelte`, `rust`, `midi`, `windows`, `desktop-app`, `music`, `bun`.
+- Issues enabled.
+- Private vulnerability reporting enabled.
+
+Keep the public Releases page focused on semver releases. Remove obsolete nightly/prerelease tags such as `main-1` and `main-2` once they are no longer useful.
 
 ## GitHub Actions
 
 Workflow defaults should keep `contents: read`. Jobs that publish a release may request `contents: write`.
 
 Actions should remain pinned to full commit SHAs and annotated with the intended version.
+
+Release builds should generate artifact attestations for the executable, installers, and checksum file.
+
+CodeQL should scan JavaScript/TypeScript, Rust, and GitHub Actions workflows on pull requests, pushes to `main`, manual dispatch, and a weekly schedule.
 
 ## Dependabot
 
@@ -33,6 +49,8 @@ Dependabot should keep grouped weekly updates for:
 - Cargo dependencies
 
 Review grouped updates with the normal verification commands before merging.
+
+Keep security updates grouped separately from routine version updates. Keep major updates separate from minor/patch updates so broad compatibility shifts are reviewed intentionally.
 
 ## Recovery Readiness
 

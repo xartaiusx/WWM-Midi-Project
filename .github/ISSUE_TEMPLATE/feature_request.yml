@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a scoped improvement for local playback, library, release, or audio-to-MIDI workflows.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should become easier, safer, or more useful?
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Describe the local workflow this supports.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should the app or tooling do?
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Project boundaries
+      options:
+        - label: This does not require publishing private or unsourced MIDI files.
+          required: true
+        - label: This does not unexpectedly change gameplay/input behavior.
+          required: true
+        - label: This does not change playlist duplicate behavior unless explicitly discussed.
+          required: true
