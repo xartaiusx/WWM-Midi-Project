@@ -3,6 +3,7 @@ node_modules
 .dev-tools
 
 *.mid
+*.midi
 *.diff
 
 # output
@@ -13,6 +14,7 @@ target
 main.py
 src-tauri/target
 src-tauri/target/release
+src-tauri/target/release/album/
 
 # code coverage
 coverage
@@ -42,3 +44,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 /.temp
+/.temp/album-curation/
