@@ -54,3 +54,6 @@ jobs:
 
       - name: Run Rust clippy
         run: .\scripts\dev.cmd cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+
+      - name: Check Tauri integration build
+        run: .\scripts\dev.cmd bun run tauri -- build --no-bundle --debug
