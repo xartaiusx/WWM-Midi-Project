@@ -1,938 +1,1154 @@
-use midly::{MidiMessage, Smf, TrackEventKind};
+use crate::instrument::{key_uses_modifier, map_exact_36, InstrumentProfile};
+use crate::scheduler::{HighResolutionWaiter, TimelineAnchor};
+use midly::{Format, MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 
-/// Note calculation mode - how MIDI notes are mapped to game keys
+const DEFAULT_TEMPO_US_PER_QUARTER: u32 = 500_000;
+const PLAYBACK_PRE_ROLL: Duration = Duration::from_millis(150);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum NoteMode {
-    Closest = 0,       // Find closest available note (original behavior)
-    Quantize = 1,      // Snap to exact scale notes only
-    TransposeOnly = 2, // Just shift octaves, direct mapping
-    Pentatonic = 3,    // Map to pentatonic scale (5 notes)
-    Chromatic = 4,     // Detailed chromatic mapping
-    Raw = 5,           // Raw 1:1 mapping, no transpose
-    Python = 6,        // Exact 1:1 copy of Python main.py logic
-    Wide = 7,          // Spread notes evenly across all 3 octaves (uses high/low more)
-    Sharps = 8,        // 36-key mode: shifts notes to use more Shift/Ctrl modifiers
+    Closest = 0,
+    Quantize = 1,
+    TransposeOnly = 2,
+    Pentatonic = 3,
+    Chromatic = 4,
+    Raw = 5,
+    Python = 6,
+    Wide = 7,
+    Sharps = 8,
+    Exact = 9,
 }
 
 impl From<u8> for NoteMode {
     fn from(value: u8) -> Self {
         match value {
-            0 => NoteMode::Closest,
-            1 => NoteMode::Quantize,
-            2 => NoteMode::TransposeOnly,
-            3 => NoteMode::Pentatonic,
-            4 => NoteMode::Chromatic,
-            5 => NoteMode::Raw,
-            6 => NoteMode::Python,
-            7 => NoteMode::Wide,
-            8 => NoteMode::Sharps,
-            _ => NoteMode::Closest,
+            0 => Self::Closest,
+            1 => Self::Quantize,
+            2 => Self::TransposeOnly,
+            3 => Self::Pentatonic,
+            4 => Self::Chromatic,
+            5 => Self::Raw,
+            6 => Self::Python,
+            7 => Self::Wide,
+            8 => Self::Sharps,
+            9 => Self::Exact,
+            _ => Self::Exact,
         }
     }
 }
 
-/// Key mode - how many keys the instrument has
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum KeyMode {
-    Keys21 = 0, // Standard 21 keys (7 notes × 3 octaves)
-    Keys36 = 1, // 36 keys with Shift/Ctrl for sharps/flats
+    Keys21 = 0,
+    Keys36 = 1,
 }
 
 impl From<u8> for KeyMode {
     fn from(value: u8) -> Self {
         match value {
-            0 => KeyMode::Keys21,
-            1 => KeyMode::Keys36,
-            _ => KeyMode::Keys21,
+            0 => Self::Keys21,
+            1 => Self::Keys36,
+            _ => Self::Keys36,
         }
     }
 }
 
-/// Band mode filter - how to filter notes for multiplayer
 #[derive(Debug, Clone)]
 pub enum BandFilter {
-    /// Split mode: player plays every Nth note starting from slot
     Split { slot: usize, total_players: usize },
-    /// Track mode: player plays only notes from a specific track
     Track { track_id: usize },
 }
 
 #[derive(Debug, Clone)]
 pub struct MidiData {
+    pub source_path: String,
     pub events: Vec<TimedEvent>,
     pub duration: f64,
-    pub transpose: i32,
+    pub duration_us: u64,
+    pub tempo_change_count: usize,
+    pub percussion_note_count: usize,
+    pub format_name: String,
+    pub timing_name: String,
+    pub tracks: Vec<MidiTrackInfo>,
+    pub recommended_track_id: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimedEvent {
-    pub time_ms: u64,
+    pub time_us: u64,
     pub event_type: EventType,
     pub note: u8,
-    pub track_id: usize, // Track index for band mode filtering
+    pub velocity: u8,
+    pub channel: u8,
+    pub track_id: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventType {
     NoteOn,
     NoteOff,
 }
 
-// 21-key mode: Basic keys for 3 octaves (7 notes each)
-const LOW_KEYS: [&str; 7] = ["z", "x", "c", "v", "b", "n", "m"];
-const MID_KEYS: [&str; 7] = ["a", "s", "d", "f", "g", "h", "j"];
-const HIGH_KEYS: [&str; 7] = ["q", "w", "e", "r", "t", "y", "u"];
-
-const ROOT_NOTE: i32 = 60; // C4
-
-/// MIDI metadata for caching
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidiMetadata {
-    pub duration: f64,     // seconds
-    pub bpm: u16,          // beats per minute (initial tempo)
-    pub note_count: u32,   // total note-on events
-    pub note_density: f32, // notes per second
+    pub duration: f64,
+    pub bpm: u16,
+    pub note_count: u32,
+    pub note_density: f32,
 }
 
-/// MIDI track information for band mode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidiTrackInfo {
-    pub id: usize,           // track index
-    pub name: String,        // track name (from MIDI metadata or generated)
-    pub note_count: u32,     // number of notes in this track
-    pub channel: Option<u8>, // MIDI channel (0-15) if consistent
+    pub id: usize,
+    pub name: String,
+    pub note_count: u32,
+    pub channel: Option<u8>,
+    pub melody_score: f64,
+    pub recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompatibilityIssue {
+    pub code: String,
+    pub severity: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompatibilityReport {
+    pub source_path: String,
+    pub profile: InstrumentProfile,
+    pub supported: bool,
+    pub score: u8,
+    pub expected_quality: String,
+    pub smf_format: String,
+    pub timing: String,
+    pub duration_us: u64,
+    pub note_count: usize,
+    pub playable_note_count: usize,
+    pub percussion_note_count: usize,
+    pub track_count: usize,
+    pub recommended_track_id: Option<usize>,
+    pub recommended_track_name: Option<String>,
+    pub tempo_change_count: usize,
+    pub out_of_range_note_count: usize,
+    pub octave_fitted_note_count: usize,
+    pub modifier_note_count: usize,
+    pub maximum_chord_size: usize,
+    pub peak_onsets_per_second: usize,
+    pub predicted_removed_note_count: usize,
+    pub issues: Vec<CompatibilityIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannedChord {
+    pub time_us: u64,
+    pub keys: Vec<String>,
+    pub source_notes: Vec<u8>,
+    pub track_ids: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackPlan {
+    pub source_path: String,
+    pub profile: InstrumentProfile,
+    pub events: Vec<PlannedChord>,
+    pub duration_us: u64,
+    pub explicit_transpose: i8,
+    pub octave_fit: bool,
+    pub compatibility: CompatibilityReport,
 }
 
 #[derive(Debug, Clone, Default)]
 struct PlaybackDiagnostics {
-    notes_sent: u64,
+    notes_attempted: u64,
+    notes_accepted_by_api: u64,
     notes_filtered: u64,
-    notes_dropped: u64,
-    max_note_send_latency_ms: f64,
-    total_note_send_latency_ms: f64,
+    input_failures: u64,
+    max_relative_onset_error_ms: f64,
+    total_relative_onset_error_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct PlaybackDiagnosticEvent {
     reason: String,
-    notes_sent: u64,
+    notes_attempted: u64,
+    notes_accepted_by_api: u64,
+    notes_confirmed_heard: u64,
     notes_filtered: u64,
-    notes_dropped: u64,
-    avg_note_send_latency_ms: f64,
-    max_note_send_latency_ms: f64,
+    input_failures: u64,
+    average_relative_onset_error_ms: f64,
+    max_relative_onset_error_ms: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TempoSegment {
+    start_tick: u64,
+    start_us: u64,
+    tempo_us_per_quarter: u32,
+}
+
+#[derive(Debug, Clone)]
+struct TempoMap {
+    ticks_per_quarter: u64,
+    segments: Vec<TempoSegment>,
+    initial_tempo: u32,
+    change_count: usize,
+}
+
+impl TempoMap {
+    fn new(ticks_per_quarter: u64, changes: &[(u64, u32, usize, usize)]) -> Self {
+        let mut ordered = changes.to_vec();
+        ordered.sort_by_key(|(tick, _, track, order)| (*tick, *track, *order));
+
+        let mut segments = vec![TempoSegment {
+            start_tick: 0,
+            start_us: 0,
+            tempo_us_per_quarter: DEFAULT_TEMPO_US_PER_QUARTER,
+        }];
+        let mut current_tick = 0;
+        let mut current_us: u64 = 0;
+        let mut current_tempo = DEFAULT_TEMPO_US_PER_QUARTER;
+
+        for (tick, tempo, _, _) in &ordered {
+            if *tick > current_tick {
+                current_us = current_us.saturating_add(ticks_to_us_exact(
+                    *tick - current_tick,
+                    current_tempo,
+                    ticks_per_quarter,
+                ));
+                current_tick = *tick;
+            }
+            current_tempo = *tempo;
+            if let Some(last) = segments
+                .last_mut()
+                .filter(|segment| segment.start_tick == *tick)
+            {
+                last.start_us = current_us;
+                last.tempo_us_per_quarter = *tempo;
+            } else {
+                segments.push(TempoSegment {
+                    start_tick: *tick,
+                    start_us: current_us,
+                    tempo_us_per_quarter: *tempo,
+                });
+            }
+        }
+
+        let initial_tempo = segments
+            .iter()
+            .rev()
+            .find(|segment| segment.start_tick == 0)
+            .map(|segment| segment.tempo_us_per_quarter)
+            .unwrap_or(DEFAULT_TEMPO_US_PER_QUARTER);
+
+        Self {
+            ticks_per_quarter,
+            segments,
+            initial_tempo,
+            change_count: ordered.len(),
+        }
+    }
+
+    fn ticks_to_us(&self, tick: u64) -> u64 {
+        let index = self
+            .segments
+            .partition_point(|segment| segment.start_tick <= tick)
+            .saturating_sub(1);
+        let segment = self.segments[index];
+        segment.start_us.saturating_add(ticks_to_us_exact(
+            tick.saturating_sub(segment.start_tick),
+            segment.tempo_us_per_quarter,
+            self.ticks_per_quarter,
+        ))
+    }
+}
+
+fn ticks_to_us_exact(ticks: u64, tempo_us_per_quarter: u32, ticks_per_quarter: u64) -> u64 {
+    ((ticks as u128 * tempo_us_per_quarter as u128) / ticks_per_quarter.max(1) as u128)
+        .min(u64::MAX as u128) as u64
 }
 
 fn emit_playback_diagnostics(window: &Window, diagnostics: &PlaybackDiagnostics, reason: &str) {
-    let avg_note_send_latency_ms = if diagnostics.notes_sent > 0 {
-        diagnostics.total_note_send_latency_ms / diagnostics.notes_sent as f64
+    let average = if diagnostics.notes_attempted > 0 {
+        diagnostics.total_relative_onset_error_ms / diagnostics.notes_attempted as f64
     } else {
         0.0
     };
-    let event = PlaybackDiagnosticEvent {
-        reason: reason.to_string(),
-        notes_sent: diagnostics.notes_sent,
-        notes_filtered: diagnostics.notes_filtered,
-        notes_dropped: diagnostics.notes_dropped,
-        avg_note_send_latency_ms,
-        max_note_send_latency_ms: diagnostics.max_note_send_latency_ms,
-    };
-    let _ = window.emit("playback-diagnostics", event);
+    let _ = window.emit(
+        "playback-diagnostics",
+        PlaybackDiagnosticEvent {
+            reason: reason.to_string(),
+            notes_attempted: diagnostics.notes_attempted,
+            notes_accepted_by_api: diagnostics.notes_accepted_by_api,
+            notes_confirmed_heard: 0,
+            notes_filtered: diagnostics.notes_filtered,
+            input_failures: diagnostics.input_failures,
+            average_relative_onset_error_ms: average,
+            max_relative_onset_error_ms: diagnostics.max_relative_onset_error_ms,
+        },
+    );
 }
 
-/// Get all MIDI metadata in a single parse (efficient for bulk loading)
 pub fn get_midi_metadata(path: &str) -> Result<MidiMetadata, String> {
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let smf = Smf::parse(&data).map_err(|e| e.to_string())?;
-
-    let ticks_per_quarter = match smf.header.timing {
-        midly::Timing::Metrical(tpq) => tpq.as_int() as f64,
-        _ => 480.0,
-    };
-
-    let mut tempo_changes: Vec<(u64, f64)> = Vec::new();
-    let mut max_ticks: u64 = 0;
-    let mut note_count: u32 = 0;
-    let mut initial_tempo: f64 = 500_000.0; // Default 120 BPM
-    let mut found_initial_tempo = false;
-
-    // Single pass: collect tempo, duration, and note count
-    for track in &smf.tracks {
-        let mut track_time_ticks: u64 = 0;
-        for event in track {
-            track_time_ticks += event.delta.as_int() as u64;
-
-            match event.kind {
-                TrackEventKind::Meta(midly::MetaMessage::Tempo(t)) => {
-                    let tempo_val = t.as_int() as f64;
-                    if !found_initial_tempo {
-                        initial_tempo = tempo_val;
-                        found_initial_tempo = true;
-                    }
-                    tempo_changes.push((track_time_ticks, tempo_val));
-                }
-                TrackEventKind::Midi {
-                    message: MidiMessage::NoteOn { vel, .. },
-                    ..
-                } if vel.as_int() > 0 => {
-                    note_count += 1;
-                }
-                _ => {}
-            }
-        }
-        if track_time_ticks > max_ticks {
-            max_ticks = track_time_ticks;
-        }
-    }
-    tempo_changes.sort_by_key(|(time, _)| *time);
-
-    // Calculate duration in seconds
-    let mut result_ms = 0.0;
-    let mut last_tick = 0u64;
-    let mut current_tempo = 500_000.0;
-
-    for &(change_tick, new_tempo) in &tempo_changes {
-        if change_tick >= max_ticks {
-            break;
-        }
-        let delta_ticks = change_tick - last_tick;
-        result_ms += delta_ticks as f64 / ticks_per_quarter * current_tempo / 1000.0;
-        last_tick = change_tick;
-        current_tempo = new_tempo;
-    }
-
-    let delta_ticks = max_ticks - last_tick;
-    result_ms += delta_ticks as f64 / ticks_per_quarter * current_tempo / 1000.0;
-
-    let duration = result_ms / 1000.0; // seconds
-    let bpm = (60_000_000.0 / initial_tempo).round() as u16;
-    let note_density = if duration > 0.0 {
-        note_count as f32 / duration as f32
+    let data = load_midi(path)?;
+    let note_count = data
+        .events
+        .iter()
+        .filter(|event| event.event_type == EventType::NoteOn)
+        .count() as u32;
+    let note_density = if data.duration > 0.0 {
+        note_count as f32 / data.duration as f32
     } else {
         0.0
     };
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let smf = Smf::parse(&bytes).map_err(|error| format!("Invalid MIDI file: {error}"))?;
+    let (_, tempo_map) = validated_timing_and_tempo(&smf)?;
+    let bpm = (60_000_000.0 / tempo_map.initial_tempo as f64).round() as u16;
 
     Ok(MidiMetadata {
-        duration,
+        duration: data.duration,
         bpm,
         note_count,
         note_density,
     })
 }
 
-/// Clean track name - keep only printable ASCII chars (A-Z, a-z, 0-9, space, common punctuation)
+pub fn get_midi_tracks(path: &str) -> Result<Vec<MidiTrackInfo>, String> {
+    Ok(load_midi(path)?.tracks)
+}
+
+pub fn load_midi(path: &str) -> Result<MidiData, String> {
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let smf = Smf::parse(&bytes).map_err(|error| format!("Invalid MIDI file: {error}"))?;
+    parse_smf(&smf, path)
+}
+
+fn validated_timing_and_tempo(smf: &Smf<'_>) -> Result<(u64, TempoMap), String> {
+    match smf.header.format {
+        Format::SingleTrack | Format::Parallel => {}
+        Format::Sequential => {
+            return Err(
+                "SMF format 2 contains independent sequences and cannot be played as one Konghou timeline. Convert it to MIDI format 0 or 1 first."
+                    .to_string(),
+            )
+        }
+    }
+
+    let ticks_per_quarter = match smf.header.timing {
+        Timing::Metrical(value) => value.as_int() as u64,
+        Timing::Timecode(_, _) => {
+            return Err(
+                "SMPTE-timed MIDI is not supported for exact Konghou scheduling. Convert it to metrical PPQN timing first."
+                    .to_string(),
+            )
+        }
+    };
+
+    let mut changes = Vec::new();
+    for (track_index, track) in smf.tracks.iter().enumerate() {
+        let mut tick = 0u64;
+        for (event_index, event) in track.iter().enumerate() {
+            tick = tick.saturating_add(event.delta.as_int() as u64);
+            if let TrackEventKind::Meta(MetaMessage::Tempo(tempo)) = event.kind {
+                changes.push((tick, tempo.as_int(), track_index, event_index));
+            }
+        }
+    }
+
+    Ok((
+        ticks_per_quarter,
+        TempoMap::new(ticks_per_quarter, &changes),
+    ))
+}
+
+fn parse_smf(smf: &Smf<'_>, path: &str) -> Result<MidiData, String> {
+    let (_, tempo_map) = validated_timing_and_tempo(smf)?;
+    let mut events = Vec::new();
+    let mut percussion_note_count = 0usize;
+    let mut max_tick = 0u64;
+    let mut track_names = HashMap::new();
+
+    for (track_index, track) in smf.tracks.iter().enumerate() {
+        let mut tick = 0u64;
+        for event in track {
+            tick = tick.saturating_add(event.delta.as_int() as u64);
+            max_tick = max_tick.max(tick);
+
+            match event.kind {
+                TrackEventKind::Meta(MetaMessage::TrackName(name)) => {
+                    track_names.insert(
+                        track_index,
+                        clean_track_name(&String::from_utf8_lossy(name)),
+                    );
+                }
+                TrackEventKind::Meta(MetaMessage::InstrumentName(name)) => {
+                    track_names
+                        .entry(track_index)
+                        .or_insert_with(|| clean_track_name(&String::from_utf8_lossy(name)));
+                }
+                TrackEventKind::Midi { channel, message } => {
+                    let channel = channel.as_int();
+                    let time_us = tempo_map.ticks_to_us(tick);
+                    match message {
+                        MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
+                            if channel == 9 {
+                                percussion_note_count += 1;
+                            }
+                            events.push(TimedEvent {
+                                time_us,
+                                event_type: EventType::NoteOn,
+                                note: key.as_int(),
+                                velocity: vel.as_int(),
+                                channel,
+                                track_id: track_index,
+                            });
+                        }
+                        MidiMessage::NoteOn { key, .. } | MidiMessage::NoteOff { key, .. } => {
+                            events.push(TimedEvent {
+                                time_us,
+                                event_type: EventType::NoteOff,
+                                note: key.as_int(),
+                                velocity: 0,
+                                channel,
+                                track_id: track_index,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    events.sort_by_key(|event| {
+        (
+            event.time_us,
+            if event.event_type == EventType::NoteOff {
+                0
+            } else {
+                1
+            },
+            event.track_id,
+            event.note,
+        )
+    });
+
+    let duration_us = tempo_map.ticks_to_us(max_tick);
+    let mut tracks = score_tracks(&events, &track_names, duration_us);
+    let recommended_track_id = tracks
+        .iter()
+        .max_by(|left, right| {
+            left.melody_score
+                .total_cmp(&right.melody_score)
+                .then_with(|| right.id.cmp(&left.id))
+        })
+        .map(|track| track.id);
+    for track in &mut tracks {
+        track.recommended = Some(track.id) == recommended_track_id;
+    }
+
+    Ok(MidiData {
+        source_path: path.to_string(),
+        events,
+        duration: duration_us as f64 / 1_000_000.0,
+        duration_us,
+        tempo_change_count: tempo_map.change_count,
+        percussion_note_count,
+        format_name: match smf.header.format {
+            Format::SingleTrack => "SMF 0",
+            Format::Parallel => "SMF 1",
+            Format::Sequential => "SMF 2",
+        }
+        .to_string(),
+        timing_name: format!("PPQN {}", tempo_map.ticks_per_quarter),
+        tracks,
+        recommended_track_id,
+    })
+}
+
 fn clean_track_name(raw: &str) -> String {
     raw.chars()
-        .filter(|c| {
-            c.is_ascii_alphanumeric()
-                || *c == ' '
-                || *c == '-'
-                || *c == '_'
-                || *c == '.'
-                || *c == '('
-                || *c == ')'
+        .filter(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, ' ' | '-' | '_' | '.' | '(' | ')')
         })
         .collect::<String>()
         .trim()
         .to_string()
 }
 
-/// Get track information from a MIDI file (for band mode)
-pub fn get_midi_tracks(path: &str) -> Result<Vec<MidiTrackInfo>, String> {
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let smf = Smf::parse(&data).map_err(|e| e.to_string())?;
+fn score_tracks(
+    events: &[TimedEvent],
+    track_names: &HashMap<usize, String>,
+    duration_us: u64,
+) -> Vec<MidiTrackInfo> {
+    let mut grouped: BTreeMap<usize, Vec<&TimedEvent>> = BTreeMap::new();
+    for event in events
+        .iter()
+        .filter(|event| event.event_type == EventType::NoteOn && event.channel != 9)
+    {
+        grouped.entry(event.track_id).or_default().push(event);
+    }
 
-    let mut tracks = Vec::new();
+    grouped
+        .into_iter()
+        .map(|(track_id, notes)| {
+            let note_count = notes.len();
+            let unique_onsets = notes
+                .iter()
+                .map(|event| event.time_us)
+                .collect::<HashSet<_>>()
+                .len();
+            let monophony = unique_onsets as f64 / note_count.max(1) as f64;
+            let average_pitch =
+                notes.iter().map(|event| event.note as f64).sum::<f64>() / note_count.max(1) as f64;
+            let continuity = if notes.len() > 1 {
+                let average_interval = notes
+                    .windows(2)
+                    .map(|pair| (pair[1].note as i32 - pair[0].note as i32).abs() as f64)
+                    .sum::<f64>()
+                    / (notes.len() - 1) as f64;
+                1.0 / (1.0 + average_interval / 12.0)
+            } else {
+                0.5
+            };
+            let density = note_count as f64 / (duration_us as f64 / 1_000_000.0).max(1.0);
+            let density_score = if density <= 12.0 {
+                1.0
+            } else {
+                (12.0 / density).clamp(0.0, 1.0)
+            };
+            let pitch_score = ((average_pitch - 36.0) / 60.0).clamp(0.0, 1.0);
+            let count_score = (note_count as f64 / 500.0).clamp(0.0, 1.0);
+            let melody_score = monophony * 40.0
+                + continuity * 25.0
+                + pitch_score * 15.0
+                + density_score * 10.0
+                + count_score * 10.0;
+            let channels: HashSet<u8> = notes.iter().map(|event| event.channel).collect();
 
-    for (idx, track) in smf.tracks.iter().enumerate() {
-        let mut name = String::new();
-        let mut note_count: u32 = 0;
-        let mut channels: std::collections::HashSet<u8> = std::collections::HashSet::new();
-
-        for event in track {
-            match event.kind {
-                TrackEventKind::Meta(midly::MetaMessage::TrackName(n)) => {
-                    name = clean_track_name(&String::from_utf8_lossy(n));
-                }
-                TrackEventKind::Meta(midly::MetaMessage::InstrumentName(n)) => {
-                    if name.is_empty() {
-                        name = clean_track_name(&String::from_utf8_lossy(n));
-                    }
-                }
-                TrackEventKind::Midi {
-                    channel,
-                    message: MidiMessage::NoteOn { vel, .. },
-                } if vel.as_int() > 0 => {
-                    note_count += 1;
-                    channels.insert(channel.as_int());
-                }
-                _ => {}
+            MidiTrackInfo {
+                id: track_id,
+                name: track_names
+                    .get(&track_id)
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Track {}", track_id + 1)),
+                note_count: note_count as u32,
+                channel: (channels.len() == 1)
+                    .then(|| *channels.iter().next().expect("one channel exists")),
+                melody_score,
+                recommended: false,
             }
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+pub fn analyze_midi(
+    path: &str,
+    transpose_semitones: i8,
+    octave_fit: bool,
+) -> Result<CompatibilityReport, String> {
+    let data = load_midi(path)?;
+    Ok(build_playback_plan(
+        &data,
+        transpose_semitones,
+        octave_fit,
+        KeyMode::Keys36,
+        NoteMode::Exact,
+        None,
+    )?
+    .compatibility)
+}
+
+pub fn build_playback_plan(
+    data: &MidiData,
+    transpose_semitones: i8,
+    octave_fit: bool,
+    key_mode: KeyMode,
+    note_mode: NoteMode,
+    band_filter: Option<BandFilter>,
+) -> Result<PlaybackPlan, String> {
+    let profile = InstrumentProfile::wwm_konghou_36();
+    let raw_notes: Vec<TimedEvent> = data
+        .events
+        .iter()
+        .copied()
+        .filter(|event| event.event_type == EventType::NoteOn && event.channel != 9)
+        .collect();
+
+    if raw_notes.is_empty() {
+        return Err(
+            "This MIDI has no pitched notes after General MIDI percussion is excluded.".to_string(),
+        );
+    }
+
+    let selected = select_single_instrument_voice(
+        &raw_notes,
+        data.recommended_track_id,
+        profile.max_clean_polyphony,
+        band_filter,
+    );
+
+    let mut chords: BTreeMap<u64, Vec<TimedEvent>> = BTreeMap::new();
+    for event in selected {
+        chords.entry(event.time_us).or_default().push(event);
+    }
+
+    let mut planned = Vec::new();
+    let mut fitted_count = 0usize;
+    let mut modifier_count = 0usize;
+
+    for (time_us, events) in chords {
+        let mut keys = Vec::new();
+        let mut source_notes = Vec::new();
+        let mut track_ids = Vec::new();
+        let mut seen_keys = HashSet::new();
+
+        for event in events {
+            let key = map_note_to_key(
+                event.note as i32,
+                transpose_semitones as i32,
+                note_mode,
+                key_mode,
+                octave_fit,
+            )?;
+            if !seen_keys.insert(key.clone()) {
+                continue;
+            }
+            if key_uses_modifier(&key) {
+                modifier_count += 1;
+            }
+            if key_mode == KeyMode::Keys36 {
+                let mapping =
+                    map_exact_36(event.note as i32, transpose_semitones as i32, octave_fit)?;
+                if mapping.octave_adjustment != 0 {
+                    fitted_count += 1;
+                }
+            }
+            keys.push(key);
+            source_notes.push(event.note);
+            track_ids.push(event.track_id);
         }
 
-        // Only include tracks with notes
-        if note_count > 0 {
-            let channel = if channels.len() == 1 {
-                Some(*channels.iter().next().unwrap())
-            } else {
-                None
-            };
-
-            // Generate name if not found
-            if name.is_empty() {
-                name = format!("Track {}", idx + 1);
-            }
-
-            tracks.push(MidiTrackInfo {
-                id: idx,
-                name,
-                note_count,
-                channel,
+        if !keys.is_empty() {
+            planned.push(PlannedChord {
+                time_us,
+                keys,
+                source_notes,
+                track_ids,
             });
         }
     }
 
-    Ok(tracks)
-}
-
-pub fn load_midi(path: &str) -> Result<MidiData, String> {
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let smf = Smf::parse(&data).map_err(|e| e.to_string())?;
-
-    let mut events = Vec::new();
-    let ticks_per_quarter = match smf.header.timing {
-        midly::Timing::Metrical(tpq) => tpq.as_int() as f64,
-        _ => 480.0, // Default
-    };
-
-    let mut tempo_changes: Vec<(u64, f64)> = Vec::new();
-
-    // First pass: collect all tempo changes from all tracks
-    for track in &smf.tracks {
-        let mut track_time_ticks: u64 = 0;
-        for event in track {
-            track_time_ticks += event.delta.as_int() as u64;
-            if let TrackEventKind::Meta(midly::MetaMessage::Tempo(t)) = event.kind {
-                tempo_changes.push((track_time_ticks, t.as_int() as f64));
-            }
-        }
-    }
-    tempo_changes.sort_by_key(|(time, _)| *time);
-
-    // Function to convert ticks to milliseconds with tempo changes
-    let ticks_to_ms = |ticks: u64| -> u64 {
-        let mut result_ms = 0.0;
-        let mut last_tick = 0u64;
-        let mut current_tempo = 500_000.0;
-
-        for &(change_tick, new_tempo) in &tempo_changes {
-            if change_tick >= ticks {
-                break;
-            }
-            // Add time up to this tempo change
-            let delta_ticks = change_tick - last_tick;
-            result_ms += delta_ticks as f64 / ticks_per_quarter * current_tempo / 1000.0;
-            last_tick = change_tick;
-            current_tempo = new_tempo;
-        }
-
-        // Add remaining time
-        let delta_ticks = ticks - last_tick;
-        result_ms += delta_ticks as f64 / ticks_per_quarter * current_tempo / 1000.0;
-        result_ms as u64
-    };
-
-    // Second pass: process all tracks with proper timing
-    for (track_idx, track) in smf.tracks.iter().enumerate() {
-        let mut track_time_ticks: u64 = 0;
-
-        for event in track {
-            track_time_ticks += event.delta.as_int() as u64;
-            let time_ms = ticks_to_ms(track_time_ticks);
-
-            if let TrackEventKind::Midi { message, .. } = event.kind {
-                match message {
-                    MidiMessage::NoteOn { key, vel } => {
-                        if vel > 0 {
-                            events.push(TimedEvent {
-                                time_ms,
-                                event_type: EventType::NoteOn,
-                                note: key.as_int(),
-                                track_id: track_idx,
-                            });
-                        } else {
-                            // Note on with velocity 0 is treated as note off
-                            events.push(TimedEvent {
-                                time_ms,
-                                event_type: EventType::NoteOff,
-                                note: key.as_int(),
-                                track_id: track_idx,
-                            });
-                        }
-                    }
-                    MidiMessage::NoteOff { key, .. } => {
-                        events.push(TimedEvent {
-                            time_ms,
-                            event_type: EventType::NoteOff,
-                            note: key.as_int(),
-                            track_id: track_idx,
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        }
+    let playable_note_count = planned.iter().map(|chord| chord.keys.len()).sum::<usize>();
+    let maximum_chord_size = raw_notes_by_time(&raw_notes)
+        .values()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0);
+    let peak_onsets_per_second = peak_onset_rate(&raw_notes);
+    let out_of_range_note_count = raw_notes
+        .iter()
+        .filter(|event| {
+            let note = event.note as i32 + transpose_semitones as i32;
+            !(profile.minimum_midi_note as i32..=profile.maximum_midi_note as i32).contains(&note)
+        })
+        .count();
+    let predicted_removed_note_count = raw_notes.len().saturating_sub(playable_note_count);
+    let mut issues = build_compatibility_issues(
+        data,
+        raw_notes.len(),
+        predicted_removed_note_count,
+        out_of_range_note_count,
+        maximum_chord_size,
+        peak_onsets_per_second,
+        &profile,
+        octave_fit,
+    );
+    if key_mode == KeyMode::Keys21 {
+        issues.push(CompatibilityIssue {
+            code: "legacy-21-key-transform".to_string(),
+            severity: "warning".to_string(),
+            message: "21-key mode is a legacy creative transform and is not pitch-exact for Konghou accidentals."
+                .to_string(),
+        });
     }
 
-    // Sort events by time
-    events.sort_by_key(|e| e.time_ms);
+    let score = compatibility_score(
+        raw_notes.len(),
+        predicted_removed_note_count,
+        data.percussion_note_count,
+        maximum_chord_size,
+        peak_onsets_per_second,
+        &profile,
+    );
+    let expected_quality = match score {
+        90..=100 => "excellent",
+        75..=89 => "good",
+        55..=74 => "limited",
+        _ => "poor",
+    }
+    .to_string();
+    let recommended_track_name = data.recommended_track_id.and_then(|id| {
+        data.tracks
+            .iter()
+            .find(|track| track.id == id)
+            .map(|track| track.name.clone())
+    });
 
-    // Calculate duration
-    let duration = if !events.is_empty() {
-        events.last().unwrap().time_ms as f64 / 1000.0
-    } else {
-        0.0
+    let report = CompatibilityReport {
+        source_path: data.source_path.clone(),
+        profile: profile.clone(),
+        supported: playable_note_count > 0 && score >= 35,
+        score,
+        expected_quality,
+        smf_format: data.format_name.clone(),
+        timing: data.timing_name.clone(),
+        duration_us: data.duration_us,
+        note_count: raw_notes.len(),
+        playable_note_count,
+        percussion_note_count: data.percussion_note_count,
+        track_count: data.tracks.len(),
+        recommended_track_id: data.recommended_track_id,
+        recommended_track_name,
+        tempo_change_count: data.tempo_change_count,
+        out_of_range_note_count,
+        octave_fitted_note_count: fitted_count,
+        modifier_note_count: modifier_count,
+        maximum_chord_size,
+        peak_onsets_per_second,
+        predicted_removed_note_count,
+        issues,
     };
 
-    // Detect best transpose (port of Python heuristic)
-    let transpose = detect_best_transpose(&events);
-    println!("Detected transpose: {} semitones", transpose);
-
-    Ok(MidiData {
-        events,
-        duration,
-        transpose,
+    Ok(PlaybackPlan {
+        source_path: data.source_path.clone(),
+        profile,
+        events: planned,
+        duration_us: data.duration_us,
+        explicit_transpose: transpose_semitones,
+        octave_fit,
+        compatibility: report,
     })
 }
 
-fn detect_best_transpose(events: &[TimedEvent]) -> i32 {
-    let instrument_notes = get_instrument_notes();
+fn raw_notes_by_time(notes: &[TimedEvent]) -> BTreeMap<u64, Vec<TimedEvent>> {
+    let mut grouped = BTreeMap::new();
+    for note in notes {
+        grouped
+            .entry(note.time_us)
+            .or_insert_with(Vec::new)
+            .push(*note);
+    }
+    grouped
+}
 
-    let mut best_transpose = 0;
-    let mut best_score = i32::MAX;
+fn select_single_instrument_voice(
+    notes: &[TimedEvent],
+    recommended_track_id: Option<usize>,
+    max_polyphony: usize,
+    band_filter: Option<BandFilter>,
+) -> Vec<TimedEvent> {
+    let mut filtered = Vec::new();
+    match band_filter {
+        Some(BandFilter::Track { track_id }) => {
+            filtered.extend(
+                notes
+                    .iter()
+                    .copied()
+                    .filter(|note| note.track_id == track_id),
+            );
+        }
+        Some(BandFilter::Split {
+            slot,
+            total_players,
+        }) if total_players > 0 => {
+            filtered.extend(
+                notes
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(index, _)| index % total_players == slot)
+                    .map(|(_, note)| note),
+            );
+        }
+        _ => filtered.extend_from_slice(notes),
+    }
 
-    // Test transpose values from -12 to +12
-    for transpose in -12..=12 {
-        let mut score = 0;
+    let has_multiple_tracks = filtered
+        .iter()
+        .map(|event| event.track_id)
+        .collect::<HashSet<_>>()
+        .len()
+        > 1;
+    let mut previous_melody = None;
+    let mut selected = Vec::new();
 
-        for event in events {
-            if matches!(event.event_type, EventType::NoteOn) {
-                let transposed_note = event.note as i32 + transpose;
-                let normalized = normalize_into_range(transposed_note);
+    for (_, mut chord) in raw_notes_by_time(&filtered) {
+        if has_multiple_tracks
+            && band_filter.is_none()
+            && recommended_track_id.is_some()
+            && !chord
+                .iter()
+                .any(|event| Some(event.track_id) == recommended_track_id)
+        {
+            continue;
+        }
 
-                // Find distance to nearest instrument note
-                let mut min_distance = i32::MAX;
-                for &inst_note in instrument_notes.iter() {
-                    let distance = (inst_note - normalized).abs();
-                    if distance < min_distance {
-                        min_distance = distance;
-                    }
-                }
-                score += min_distance;
+        chord.sort_by_key(|event| (event.note, std::cmp::Reverse(event.velocity)));
+        chord.dedup_by_key(|event| event.note);
+        let preferred: Vec<TimedEvent> = chord
+            .iter()
+            .copied()
+            .filter(|event| Some(event.track_id) == recommended_track_id)
+            .collect();
+        let pool = if preferred.is_empty() {
+            &chord
+        } else {
+            &preferred
+        };
+        let melody = choose_continuous_melody(pool, previous_melody);
+        previous_melody = melody.map(|event| event.note);
+
+        let mut chosen = Vec::new();
+        if let Some(melody) = melody {
+            chosen.push(melody);
+        }
+        if chosen.len() < max_polyphony {
+            if let Some(bass) = chord
+                .iter()
+                .copied()
+                .filter(|event| !chosen.iter().any(|chosen| chosen.note == event.note))
+                .min_by_key(|event| event.note)
+            {
+                chosen.push(bass);
             }
         }
-
-        if score < best_score {
-            best_score = score;
-            best_transpose = transpose;
+        while chosen.len() < max_polyphony {
+            let melody_note = chosen.first().map(|event| event.note).unwrap_or(60);
+            let Some(inner) = chord
+                .iter()
+                .copied()
+                .filter(|event| !chosen.iter().any(|chosen| chosen.note == event.note))
+                .min_by_key(|event| (event.note as i32 - melody_note as i32).abs())
+            else {
+                break;
+            };
+            chosen.push(inner);
         }
+        chosen.sort_by_key(|event| event.note);
+        selected.extend(chosen);
     }
 
-    best_transpose
+    selected.sort_by_key(|event| (event.time_us, event.note));
+    selected
 }
 
-#[inline]
-fn get_instrument_notes() -> &'static [i32; 21] {
-    &INSTRUMENT_NOTES
+fn choose_continuous_melody(
+    candidates: &[TimedEvent],
+    previous_note: Option<u8>,
+) -> Option<TimedEvent> {
+    candidates.iter().copied().min_by_key(|event| {
+        if let Some(previous) = previous_note {
+            (
+                (event.note as i32 - previous as i32).abs(),
+                std::cmp::Reverse(event.velocity),
+                std::cmp::Reverse(event.note),
+            )
+        } else {
+            (
+                0,
+                std::cmp::Reverse(event.velocity),
+                std::cmp::Reverse(event.note),
+            )
+        }
+    })
 }
 
-fn normalize_into_range(note: i32) -> i32 {
-    // Match Python version exactly - simple octave shifting
-    // Our instrument range: C3 (48) to B5 (83)
-    let lo = INSTRUMENT_NOTES[0]; // 48
-    let hi = INSTRUMENT_NOTES[20]; // 83
-
-    let mut result = note;
-    while result < lo {
-        result += 12;
+fn peak_onset_rate(notes: &[TimedEvent]) -> usize {
+    let mut times = notes.iter().map(|note| note.time_us).collect::<Vec<_>>();
+    times.sort_unstable();
+    let mut left = 0usize;
+    let mut peak = 0usize;
+    for right in 0..times.len() {
+        while left < right && times[right].saturating_sub(times[left]) >= 1_000_000 {
+            left += 1;
+        }
+        peak = peak.max(right - left + 1);
     }
-    while result > hi {
-        result -= 12;
-    }
-    result
+    peak
 }
 
-// Pre-computed instrument notes for faster lookup
-const INSTRUMENT_NOTES: [i32; 21] = [
-    // Low octave (C3-B3): 48, 50, 52, 53, 55, 57, 59
-    48, 50, 52, 53, 55, 57, 59, // Mid octave (C4-B4): 60, 62, 64, 65, 67, 69, 71
-    60, 62, 64, 65, 67, 69, 71, // High octave (C5-B5): 72, 74, 76, 77, 79, 81, 83
-    72, 74, 76, 77, 79, 81, 83,
+#[allow(clippy::too_many_arguments)]
+fn build_compatibility_issues(
+    data: &MidiData,
+    note_count: usize,
+    removed_count: usize,
+    out_of_range_count: usize,
+    maximum_chord_size: usize,
+    peak_rate: usize,
+    profile: &InstrumentProfile,
+    octave_fit: bool,
+) -> Vec<CompatibilityIssue> {
+    let mut issues = Vec::new();
+    if data.percussion_note_count > 0 {
+        issues.push(CompatibilityIssue {
+            code: "gm-percussion-excluded".to_string(),
+            severity: "info".to_string(),
+            message: format!(
+                "{} General MIDI percussion notes on channel 10 will be excluded.",
+                data.percussion_note_count
+            ),
+        });
+    }
+    if out_of_range_count > 0 {
+        issues.push(CompatibilityIssue {
+            code: "octave-fit".to_string(),
+            severity: if octave_fit { "info" } else { "error" }.to_string(),
+            message: if octave_fit {
+                format!(
+                    "{out_of_range_count} notes require pitch-preserving octave fit in multiples of 12 semitones."
+                )
+            } else {
+                format!(
+                    "{out_of_range_count} notes are outside the Konghou range; enable octave fit or change the explicit transpose."
+                )
+            },
+        });
+    }
+    if maximum_chord_size > profile.max_clean_polyphony {
+        issues.push(CompatibilityIssue {
+            code: "polyphony-reduction".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "The largest chord has {maximum_chord_size} notes; the current Konghou profile keeps at most {} voices.",
+                profile.max_clean_polyphony
+            ),
+        });
+    }
+    if peak_rate as f64 > profile.max_clean_onsets_per_second {
+        issues.push(CompatibilityIssue {
+            code: "onset-density".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "Peak density is {peak_rate} notes/second, above the uncalibrated safe target of {:.0}.",
+                profile.max_clean_onsets_per_second
+            ),
+        });
+    }
+    if removed_count > 0 {
+        issues.push(CompatibilityIssue {
+            code: "voice-selection".to_string(),
+            severity: if removed_count * 2 > note_count {
+                "warning"
+            } else {
+                "info"
+            }
+            .to_string(),
+            message: format!(
+                "Deterministic melody and harmony selection predicts removing {removed_count} of {note_count} pitched notes."
+            ),
+        });
+    }
+    if data.tempo_change_count > 1 {
+        issues.push(CompatibilityIssue {
+            code: "tempo-map-preserved".to_string(),
+            severity: "info".to_string(),
+            message: format!(
+                "All {} tempo events are preserved on the canonical microsecond timeline.",
+                data.tempo_change_count
+            ),
+        });
+    }
+    issues
+}
+
+fn compatibility_score(
+    note_count: usize,
+    removed_count: usize,
+    percussion_count: usize,
+    maximum_chord_size: usize,
+    peak_rate: usize,
+    profile: &InstrumentProfile,
+) -> u8 {
+    let note_count = note_count.max(1) as f64;
+    let removal_penalty = (removed_count as f64 / note_count * 40.0).min(40.0);
+    let percussion_penalty = (percussion_count as f64 / note_count * 15.0).min(15.0);
+    let chord_penalty = if maximum_chord_size > profile.max_clean_polyphony {
+        ((maximum_chord_size - profile.max_clean_polyphony) as f64 * 3.0).min(15.0)
+    } else {
+        0.0
+    };
+    let density_penalty = if peak_rate as f64 > profile.max_clean_onsets_per_second {
+        (((peak_rate as f64 / profile.max_clean_onsets_per_second) - 1.0) * 10.0).min(20.0)
+    } else {
+        0.0
+    };
+    (100.0 - removal_penalty - percussion_penalty - chord_penalty - density_penalty)
+        .clamp(0.0, 100.0)
+        .round() as u8
+}
+
+pub fn map_note_to_key(
+    note: i32,
+    transpose: i32,
+    note_mode: NoteMode,
+    key_mode: KeyMode,
+    octave_fit: bool,
+) -> Result<String, String> {
+    if key_mode == KeyMode::Keys36 {
+        return map_exact_36(note, transpose, octave_fit).map(|mapping| mapping.key);
+    }
+
+    Ok(match note_mode {
+        NoteMode::Raw => legacy_raw(note + transpose),
+        NoteMode::TransposeOnly => legacy_transpose_only(note, transpose),
+        NoteMode::Pentatonic => legacy_pentatonic(note, transpose),
+        NoteMode::Chromatic => legacy_chromatic(note, transpose),
+        NoteMode::Wide => legacy_wide(note, transpose),
+        NoteMode::Closest
+        | NoteMode::Quantize
+        | NoteMode::Python
+        | NoteMode::Sharps
+        | NoteMode::Exact => legacy_closest(note, transpose),
+    })
+}
+
+const NATURAL_NOTES: [i32; 21] = [
+    48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83,
+];
+const LEGACY_KEYS: [&str; 21] = [
+    "z", "x", "c", "v", "b", "n", "m", "a", "s", "d", "f", "g", "h", "j", "q", "w", "e", "r", "t",
+    "y", "u",
 ];
 
-fn note_to_key(note: i32, transpose: i32) -> String {
-    // Match Python version exactly
-    let target = normalize_into_range(note + transpose);
-
-    let mut best_idx = 0;
-    let mut best_dist = (INSTRUMENT_NOTES[0] - target).abs();
-
-    for (i, &inst_note) in INSTRUMENT_NOTES.iter().enumerate() {
-        let dist = (inst_note - target).abs();
-        if dist < best_dist {
-            best_idx = i;
-            best_dist = dist;
-        }
+fn normalize_legacy(mut note: i32) -> i32 {
+    while note < 48 {
+        note += 12;
     }
-
-    // Map index to key (21 keys total)
-    const ALL_KEYS: [&str; 21] = [
-        "z", "x", "c", "v", "b", "n", "m", // Low
-        "a", "s", "d", "f", "g", "h", "j", // Mid
-        "q", "w", "e", "r", "t", "y", "u", // High
-    ];
-
-    ALL_KEYS[best_idx].to_string()
+    while note > 83 {
+        note -= 12;
+    }
+    note
 }
 
-/// Quantize mode - snap to exact scale notes only (no in-between approximation)
-fn note_to_key_quantize(note: i32, transpose: i32) -> String {
-    // Just use closest mode - same behavior
-    note_to_key(note, transpose)
+fn legacy_closest(note: i32, transpose: i32) -> String {
+    let target = normalize_legacy(note + transpose);
+    let index = NATURAL_NOTES
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, candidate)| (*candidate - target).abs())
+        .map(|(index, _)| index)
+        .unwrap_or(7);
+    LEGACY_KEYS[index].to_string()
 }
 
-/// Transpose Only mode - direct semitone to key mapping within octave
-fn note_to_key_transpose(note: i32, transpose: i32) -> String {
+fn legacy_raw(note: i32) -> String {
+    LEGACY_KEYS[note.rem_euclid(21) as usize].to_string()
+}
+
+fn legacy_transpose_only(note: i32, transpose: i32) -> String {
     let target = note + transpose;
-
-    // Get semitone within octave (0-11)
-    let semitone = ((target - ROOT_NOTE) % 12 + 12) % 12;
-
-    // Determine octave
-    let octave_offset = (target - ROOT_NOTE) / 12;
-    let octave = (1 + octave_offset).clamp(0, 2) as usize;
-
-    // Direct mapping: semitone 0-11 to key 0-6 (wrap around)
-    // This gives a more "raw" feel
-    let key_idx = (semitone * 7 / 12) as usize;
-
-    match octave {
-        0 => LOW_KEYS[key_idx].to_string(),
-        1 => MID_KEYS[key_idx].to_string(),
-        _ => HIGH_KEYS[key_idx].to_string(),
-    }
-}
-
-/// Pentatonic mode - map to pentatonic scale (5 notes per octave)
-fn note_to_key_pentatonic(note: i32, transpose: i32) -> String {
-    let normalized = normalize_into_range(note + transpose);
-
-    // Get semitone and octave
-    let semitone = ((normalized - ROOT_NOTE) % 12 + 12) % 12;
-    let octave = if normalized < 60 {
-        0
-    } else if normalized < 72 {
-        1
-    } else {
-        2
-    };
-
-    // Map to pentatonic: C(0), D(2), E(4), G(7), A(9) -> keys 0,1,2,4,5
-    let key_idx = match semitone {
-        0 | 1 => 0, // C, C# -> do
-        2 | 3 => 1, // D, Eb -> re
-        4..=6 => 2, // E, F, F# -> mi
-        7 | 8 => 4, // G, G# -> so
-        _ => 5,     // A, Bb, B -> la
-    };
-
-    match octave {
-        0 => LOW_KEYS[key_idx].to_string(),
-        1 => MID_KEYS[key_idx].to_string(),
-        _ => HIGH_KEYS[key_idx].to_string(),
-    }
-}
-
-/// Chromatic mode - detailed mapping of all 12 semitones to closest natural key
-fn note_to_key_chromatic(note: i32, transpose: i32) -> String {
-    let normalized = normalize_into_range(note + transpose);
-
-    // Get semitone and octave
-    let semitone = ((normalized - ROOT_NOTE) % 12 + 12) % 12;
-    let octave = if normalized < 60 {
-        0
-    } else if normalized < 72 {
-        1
-    } else {
-        2
-    };
-
-    // Map 12 semitones to 7 keys
-    let key_idx = match semitone {
-        0 | 1 => 0, // C, C# -> do
-        2 => 1,     // D -> re
-        3 | 4 => 2, // Eb, E -> mi
-        5 | 6 => 3, // F, F# -> fa
-        7 | 8 => 4, // G, G# -> so
-        9 => 5,     // A -> la
-        _ => 6,     // Bb, B -> ti
-    };
-
-    match octave {
-        0 => LOW_KEYS[key_idx].to_string(),
-        1 => MID_KEYS[key_idx].to_string(),
-        _ => HIGH_KEYS[key_idx].to_string(),
-    }
-}
-
-/// Raw mode - direct 1:1 mapping, no transpose, no processing
-/// MIDI note modulo 21 maps directly to one of 21 keys
-fn note_to_key_raw(note: i32) -> String {
-    // Direct mapping: note % 21 gives key index 0-20
-    let key_idx = note.rem_euclid(21);
-    let all_keys = [
-        LOW_KEYS.as_slice(),
-        MID_KEYS.as_slice(),
-        HIGH_KEYS.as_slice(),
-    ]
-    .concat();
-    all_keys[key_idx as usize].to_string()
-}
-
-/// Wide mode - spread notes evenly across all 21 keys
-/// Uses high and low rows more often by mapping the song's note range proportionally
-fn note_to_key_wide(note: i32, transpose: i32) -> String {
-    let target = note + transpose;
-
-    // Map MIDI note range (roughly 36-96, typical piano range) to 21 keys
-    // Piano middle C is MIDI 60, we want that around the middle keys
-    // Low: 36-47 (C2-B2), Mid: 48-71 (C3-B4), High: 72-96 (C5-C7)
-
-    // Use semitone position to determine octave more aggressively
-    // Instead of normalizing into a narrow range, we keep the original octave feel
-    let semitone = ((target % 12) + 12) % 12;
-
-    // Determine octave based on actual note height
-    // This uses the full range: notes below 54 go low, 54-66 go mid, above 66 go high
-    let octave = if target < 54 {
-        0 // Low row - anything below F#3
-    } else if target < 66 {
-        1 // Mid row - F#3 to F#4
-    } else {
-        2 // High row - anything above F#4
-    };
-
-    // Map semitone to key index (0-6)
-    // Use a direct semitone-to-degree mapping
-    let key_idx = match semitone {
-        0 => 0,     // C -> do
-        1 | 2 => 1, // C#, D -> re
-        3 | 4 => 2, // D#, E -> mi
-        5 => 3,     // F -> fa
-        6 | 7 => 4, // F#, G -> so
-        8 | 9 => 5, // G#, A -> la
-        _ => 6,     // A#, B -> ti
-    };
-
-    match octave {
-        0 => LOW_KEYS[key_idx].to_string(),
-        1 => MID_KEYS[key_idx].to_string(),
-        _ => HIGH_KEYS[key_idx].to_string(),
-    }
-}
-
-/// Python mode - EXACT 1:1 copy of main.py logic
-/// This is the proven working implementation
-fn note_to_key_python(note: i32, transpose: i32) -> String {
-    // EXACT copy from Python main.py
-    // SCALE_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
-    // ROOT_NOTE = 60
-    // LOW_SCALE = [48, 50, 52, 53, 55, 57, 59]
-    // MID_SCALE = [60, 62, 64, 65, 67, 69, 71]
-    // HIGH_SCALE = [72, 74, 76, 77, 79, 81, 83]
-    // INSTRUMENT_NOTES = LOW_SCALE + MID_SCALE + HIGH_SCALE (21 notes)
-
-    const PY_INSTRUMENT_NOTES: [i32; 21] = [
-        48, 50, 52, 53, 55, 57, 59, // LOW_SCALE
-        60, 62, 64, 65, 67, 69, 71, // MID_SCALE
-        72, 74, 76, 77, 79, 81, 83, // HIGH_SCALE
-    ];
-
-    const PY_KEYS: [&str; 21] = [
-        "z", "x", "c", "v", "b", "n", "m", // LOW_KEYS
-        "a", "s", "d", "f", "g", "h", "j", // MID_KEYS
-        "q", "w", "e", "r", "t", "y", "u", // HIGH_KEYS
-    ];
-
-    // normalize_into_range - EXACT Python logic
-    let lo = PY_INSTRUMENT_NOTES[0]; // 48
-    let hi = PY_INSTRUMENT_NOTES[20]; // 83
-
-    let mut target = note + transpose;
-    while target < lo {
-        target += 12;
-    }
-    while target > hi {
-        target -= 12;
-    }
-
-    // note_to_key - EXACT Python logic
-    let mut best_idx: usize = 0;
-    let mut best_dist = (PY_INSTRUMENT_NOTES[0] - target).abs();
-
-    for (i, &inst_note) in PY_INSTRUMENT_NOTES.iter().enumerate() {
-        let dist = (inst_note - target).abs();
-        if dist < best_dist {
-            best_idx = i;
-            best_dist = dist;
-        }
-    }
-
-    PY_KEYS[best_idx].to_string()
-}
-
-/// Convert a semitone (0-11) and octave (0-2) to a 36-key string
-/// Natural notes use normal keys, accidentals use Shift/Ctrl modifiers
-fn semitone_to_key_36(semitone: i32, octave: usize) -> String {
-    match semitone {
-        // Natural notes - normal keys
-        0 => match octave {
-            0 => "z",
-            1 => "a",
-            _ => "q",
-        }
-        .to_string(), // C (do)
-        2 => match octave {
-            0 => "x",
-            1 => "s",
-            _ => "w",
-        }
-        .to_string(), // D (re)
-        4 => match octave {
-            0 => "c",
-            1 => "d",
-            _ => "e",
-        }
-        .to_string(), // E (mi)
-        5 => match octave {
-            0 => "v",
-            1 => "f",
-            _ => "r",
-        }
-        .to_string(), // F (fa)
-        7 => match octave {
-            0 => "b",
-            1 => "g",
-            _ => "t",
-        }
-        .to_string(), // G (so)
-        9 => match octave {
-            0 => "n",
-            1 => "h",
-            _ => "y",
-        }
-        .to_string(), // A (la)
-        11 => match octave {
-            0 => "m",
-            1 => "j",
-            _ => "u",
-        }
-        .to_string(), // B (ti)
-
-        // Accidentals - Shift or Ctrl + key
-        1 => match octave {
-            0 => "shift+z",
-            1 => "shift+a",
-            _ => "shift+q",
-        }
-        .to_string(), // C# (#1)
-        3 => match octave {
-            0 => "ctrl+c",
-            1 => "ctrl+d",
-            _ => "ctrl+e",
-        }
-        .to_string(), // D#/Eb (b3)
-        6 => match octave {
-            0 => "shift+v",
-            1 => "shift+f",
-            _ => "shift+r",
-        }
-        .to_string(), // F# (#4)
-        8 => match octave {
-            0 => "shift+b",
-            1 => "shift+g",
-            _ => "shift+t",
-        }
-        .to_string(), // G# (#5)
-        10 => match octave {
-            0 => "ctrl+m",
-            1 => "ctrl+j",
-            _ => "ctrl+u",
-        }
-        .to_string(), // A#/Bb (b7)
-
-        _ => "a".to_string(), // Fallback
-    }
-}
-
-/// Calculate octave (0=low, 1=mid, 2=high) for 36-key mode
-fn get_octave_36(target: i32) -> usize {
-    // C3=48, C4=60, C5=72
-    // Low octave: <60, Mid: 60-71, High: >=72
-    if target < 60 {
+    let degree = (target.rem_euclid(12) * 7 / 12) as usize;
+    let octave = if target < 60 {
         0
     } else if target < 72 {
         1
     } else {
         2
-    }
-}
-
-/// 36-key Closest mode - find closest available chromatic note
-fn note_to_key_36_closest(note: i32, transpose: i32) -> String {
-    let target = note + transpose;
-    let semitone = ((target % 12) + 12) % 12;
-    let octave = get_octave_36(target);
-    semitone_to_key_36(semitone, octave)
-}
-
-/// 36-key Quantize mode - snap to exact major scale notes only
-fn note_to_key_36_quantize(note: i32, transpose: i32) -> String {
-    let target = note + transpose;
-    let semitone = ((target % 12) + 12) % 12;
-    let octave = get_octave_36(target);
-
-    // Snap to nearest major scale note (0, 2, 4, 5, 7, 9, 11)
-    let quantized = match semitone {
-        0 | 1 => 0,  // C, C# -> C
-        2 | 3 => 2,  // D, D# -> D
-        4 => 4,      // E -> E
-        5 | 6 => 5,  // F, F# -> F
-        7 | 8 => 7,  // G, G# -> G
-        9 | 10 => 9, // A, A# -> A
-        11 => 11,    // B -> B
-        _ => 0,
     };
-
-    semitone_to_key_36(quantized, octave)
+    LEGACY_KEYS[octave * 7 + degree].to_string()
 }
 
-/// 36-key TransposeOnly mode - direct semitone mapping
-fn note_to_key_36_transpose(note: i32, transpose: i32) -> String {
-    let target = note + transpose;
-    let semitone = ((target % 12) + 12) % 12;
-    let octave = get_octave_36(target);
-    semitone_to_key_36(semitone, octave)
-}
-
-/// 36-key Pentatonic mode - map to pentatonic scale
-/// Pentatonic: C, D, E, G, A (semitones 0, 2, 4, 7, 9)
-fn note_to_key_36_pentatonic(note: i32, transpose: i32) -> String {
-    let target = note + transpose;
-    let semitone = ((target % 12) + 12) % 12;
-    let octave = get_octave_36(target);
-
-    // Map to nearest pentatonic note
-    let penta = match semitone {
-        0 | 1 => 0,  // C, C# -> C
-        2 | 3 => 2,  // D, D# -> D
-        4..=6 => 4,  // E, F, F# -> E
-        7 | 8 => 7,  // G, G# -> G
-        9..=11 => 9, // A, A#, B -> A
-        _ => 0,
+fn legacy_pentatonic(note: i32, transpose: i32) -> String {
+    let target = normalize_legacy(note + transpose);
+    let degree = match target.rem_euclid(12) {
+        0 | 1 => 0,
+        2 | 3 => 1,
+        4..=6 => 2,
+        7 | 8 => 4,
+        _ => 5,
     };
-
-    semitone_to_key_36(penta, octave)
-}
-
-/// 36-key Chromatic mode - full chromatic mapping (same as closest for 36-key)
-fn note_to_key_36_chromatic(note: i32, transpose: i32) -> String {
-    note_to_key_36_closest(note, transpose)
-}
-
-/// 36-key Raw mode - direct 1:1 mapping, no transpose
-fn note_to_key_36_raw(note: i32) -> String {
-    // 36 total keys: 12 per octave × 3 octaves
-    let key_idx = note.rem_euclid(36);
-    let octave = (key_idx / 12) as usize;
-    let semitone = key_idx % 12;
-
-    semitone_to_key_36(semitone, octave)
-}
-
-/// 36-key Wide mode - spread notes using wider octave boundaries
-fn note_to_key_36_wide(note: i32, transpose: i32) -> String {
-    let target = note + transpose;
-    let semitone = ((target % 12) + 12) % 12;
-
-    // Use wider octave boundaries (same as 21-key Wide)
-    let octave = if target < 54 {
-        0 // Low row
-    } else if target < 66 {
-        1 // Mid row
+    let octave = if target < 60 {
+        0
+    } else if target < 72 {
+        1
     } else {
-        2 // High row
+        2
     };
-
-    semitone_to_key_36(semitone, octave)
+    LEGACY_KEYS[octave * 7 + degree].to_string()
 }
 
-/// 36-key Sharps mode - shifts notes to use more Shift/Ctrl modifiers
-/// Adds +1 semitone so natural notes become sharps (C→C#, D→D#, etc.)
-fn note_to_key_36_sharps(note: i32, transpose: i32) -> String {
-    // Shift by +1 semitone to convert naturals to sharps
-    let target = note + transpose + 1;
-    let semitone = ((target % 12) + 12) % 12;
-    let octave = get_octave_36(target);
-    semitone_to_key_36(semitone, octave)
+fn legacy_chromatic(note: i32, transpose: i32) -> String {
+    let target = normalize_legacy(note + transpose);
+    let degree = match target.rem_euclid(12) {
+        0 | 1 => 0,
+        2 => 1,
+        3 | 4 => 2,
+        5 | 6 => 3,
+        7 | 8 => 4,
+        9 => 5,
+        _ => 6,
+    };
+    let octave = if target < 60 {
+        0
+    } else if target < 72 {
+        1
+    } else {
+        2
+    };
+    LEGACY_KEYS[octave * 7 + degree].to_string()
+}
+
+fn legacy_wide(note: i32, transpose: i32) -> String {
+    let target = note + transpose;
+    let degree = match target.rem_euclid(12) {
+        0 => 0,
+        1 | 2 => 1,
+        3 | 4 => 2,
+        5 => 3,
+        6 | 7 => 4,
+        8 | 9 => 5,
+        _ => 6,
+    };
+    let octave = if target < 54 {
+        0
+    } else if target < 66 {
+        1
+    } else {
+        2
+    };
+    LEGACY_KEYS[octave * 7 + degree].to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn play_midi(
-    midi_data: MidiData,
+    plan: PlaybackPlan,
     is_playing: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
     loop_mode: Arc<AtomicBool>,
-    note_mode: Arc<AtomicU8>,
-    key_mode: Arc<AtomicU8>,
-    octave_shift: Arc<std::sync::atomic::AtomicI8>,
-    speed: Arc<std::sync::atomic::AtomicU16>,
-    current_position: Arc<std::sync::Mutex<f64>>,
-    seek_offset: Arc<std::sync::Mutex<f64>>,
-    band_filter: Arc<std::sync::Mutex<Option<BandFilter>>>,
+    speed: Arc<AtomicU16>,
+    current_position: Arc<Mutex<f64>>,
+    seek_offset: Arc<Mutex<f64>>,
     window: Window,
 ) {
-    // Log band mode if active at start
-    if let Some(ref filter) = *band_filter.lock().unwrap() {
-        match filter {
-            BandFilter::Split {
-                slot,
-                total_players,
-            } => {
-                println!(
-                    "[BAND] Split mode: playing note {} of every {} notes",
-                    slot + 1,
-                    total_players
-                );
-            }
-            BandFilter::Track { track_id } => {
-                println!("[BAND] Track mode: playing track {}", track_id);
-            }
-        }
-    }
-
-    // Spawn a separate thread for progress updates
     let is_playing_progress = Arc::clone(&is_playing);
     let is_paused_progress = Arc::clone(&is_paused);
     let current_position_progress = Arc::clone(&current_position);
     let window_progress = window.clone();
-
     std::thread::spawn(move || {
         while is_playing_progress.load(Ordering::SeqCst) {
             if !is_paused_progress.load(Ordering::SeqCst) {
@@ -943,220 +1159,214 @@ pub fn play_midi(
         }
     });
 
+    let waiter = HighResolutionWaiter::new();
     loop {
-        let mut diagnostics = PlaybackDiagnostics::default();
-
-        // Get current seek offset (reset to 0 on loop)
-        let offset_ms = (*seek_offset.lock().unwrap() * 1000.0) as u64;
-
-        // Track which key is pressed for each MIDI note (note -> key that was pressed)
-        let _note_to_pressed_key: std::collections::HashMap<u8, String> =
-            std::collections::HashMap::new();
-        // Track reference count for each key (multiple notes might map to same key)
-        let key_active_count: std::collections::HashMap<String, i32> =
-            std::collections::HashMap::new();
-
-        // Helper to release all keys and reset modifier counts
-        let release_all_keys = |key_active_count: &std::collections::HashMap<String, i32>| {
-            for (key, count) in key_active_count {
-                if *count > 0 {
-                    crate::keyboard::key_up(key);
-                }
-            }
-            // Reset modifier reference counts when stopping
-            crate::keyboard::reset_modifier_counts();
+        let mut diagnostics = PlaybackDiagnostics {
+            notes_filtered: plan.compatibility.predicted_removed_note_count as u64,
+            ..PlaybackDiagnostics::default()
         };
+        let offset_us = (*seek_offset.lock().unwrap() * 1_000_000.0) as u64;
+        let initial_speed = speed.load(Ordering::SeqCst) as f64 / 100.0;
+        let mut anchor =
+            TimelineAnchor::new(Instant::now() + PLAYBACK_PRE_ROLL, offset_us, initial_speed);
 
-        // Track song position in milliseconds (not affected by speed changes)
-        let mut song_position_ms: u64 = offset_ms;
-        let mut last_event_time = Instant::now();
-
-        // Counter for split mode note filtering
-        let mut note_on_counter: usize = 0;
-
-        for event in &midi_data.events {
-            if event.time_ms < offset_ms {
-                continue;
-            }
-
+        for chord in plan
+            .events
+            .iter()
+            .filter(|event| event.time_us >= offset_us)
+        {
             if !is_playing.load(Ordering::SeqCst) {
-                release_all_keys(&key_active_count);
+                let _ = crate::keyboard::release_all_modifiers();
                 return;
             }
 
-            // Calculate delta from last processed position to this event (in song time)
-            let delta_song_ms = event.time_ms.saturating_sub(song_position_ms);
-
-            // Wait for the delta time, adjusted by current speed
-            if delta_song_ms > 0 {
-                let mut remaining_song_ms = delta_song_ms as f64;
-
-                while remaining_song_ms > 0.0 {
-                    if !is_playing.load(Ordering::SeqCst) {
-                        release_all_keys(&key_active_count);
-                        return;
-                    }
-
-                    // Handle pause
-                    if is_paused.load(Ordering::SeqCst) {
-                        while is_paused.load(Ordering::SeqCst) && is_playing.load(Ordering::SeqCst)
-                        {
-                            std::thread::sleep(Duration::from_millis(50));
-                            if !is_playing.load(Ordering::SeqCst) {
-                                release_all_keys(&key_active_count);
-                                return;
-                            }
-                        }
-                        last_event_time = Instant::now();
-                        continue;
-                    }
-
-                    // Get current speed (stored as speed * 100)
-                    let current_speed = speed.load(Ordering::SeqCst) as f64 / 100.0;
-
-                    // Calculate real time to wait based on speed
-                    // sleep for a small chunk and update
-                    let sleep_ms = 2.0_f64.min(remaining_song_ms / current_speed);
-                    std::thread::sleep(Duration::from_micros((sleep_ms * 1000.0) as u64));
-
-                    let elapsed = last_event_time.elapsed();
-                    last_event_time = Instant::now();
-
-                    // Convert real elapsed time to song time
-                    let song_ms_passed = elapsed.as_secs_f64() * 1000.0 * current_speed;
-                    remaining_song_ms -= song_ms_passed;
-
-                    // Update current position
-                    let new_pos = (event.time_ms as f64 - remaining_song_ms.max(0.0)) / 1000.0;
-                    *current_position.lock().unwrap() = new_pos;
+            loop {
+                if !is_playing.load(Ordering::SeqCst) {
+                    let _ = crate::keyboard::release_all_modifiers();
+                    return;
                 }
+
+                if is_paused.load(Ordering::SeqCst) {
+                    let paused_at = Instant::now();
+                    while is_paused.load(Ordering::SeqCst) && is_playing.load(Ordering::SeqCst) {
+                        waiter.sleep_for(Duration::from_millis(20));
+                    }
+                    anchor.shift_real_anchor(paused_at.elapsed());
+                    continue;
+                }
+
+                let current_speed = speed.load(Ordering::SeqCst) as f64 / 100.0;
+                if (current_speed - anchor.speed()).abs() > f64::EPSILON {
+                    anchor.reanchor(Instant::now(), current_speed);
+                }
+
+                let deadline = anchor.deadline_for(chord.time_us);
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                waiter.sleep_for((deadline - now).min(Duration::from_millis(20)));
+                let song_position = anchor.song_position_us(Instant::now());
+                *current_position.lock().unwrap() = song_position as f64 / 1_000_000.0;
             }
 
-            // Update song position to this event's time
-            song_position_ms = event.time_ms;
-            last_event_time = Instant::now();
+            let deadline = anchor.deadline_for(chord.time_us);
+            let onset_error_ms = Instant::now()
+                .saturating_duration_since(deadline)
+                .as_secs_f64()
+                * 1000.0;
+            diagnostics.notes_attempted += chord.keys.len() as u64;
+            diagnostics.total_relative_onset_error_ms += onset_error_ms * chord.keys.len() as f64;
+            diagnostics.max_relative_onset_error_ms =
+                diagnostics.max_relative_onset_error_ms.max(onset_error_ms);
 
-            // Get key based on key mode and note calculation mode (read in realtime for live switching)
-            let current_key_mode = KeyMode::from(key_mode.load(Ordering::SeqCst));
-            let current_note_mode = NoteMode::from(note_mode.load(Ordering::SeqCst));
-            // Get octave shift in semitones (1 octave = 12 semitones)
-            let shift_semitones = octave_shift.load(Ordering::SeqCst) as i32 * 12;
-            let total_transpose = midi_data.transpose + shift_semitones;
-
-            // Select key mapping based on key mode and note mode
-            let key = match current_key_mode {
-                KeyMode::Keys36 => {
-                    // 36-key mode - use note mode with modifier keys
-                    match current_note_mode {
-                        NoteMode::Closest => {
-                            note_to_key_36_closest(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Quantize => {
-                            note_to_key_36_quantize(event.note as i32, total_transpose)
-                        }
-                        NoteMode::TransposeOnly => {
-                            note_to_key_36_transpose(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Pentatonic => {
-                            note_to_key_36_pentatonic(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Chromatic => {
-                            note_to_key_36_chromatic(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Raw => note_to_key_36_raw(event.note as i32 + shift_semitones),
-                        NoteMode::Python => note_to_key_python(event.note as i32, total_transpose),
-                        NoteMode::Wide => note_to_key_36_wide(event.note as i32, total_transpose),
-                        NoteMode::Sharps => {
-                            note_to_key_36_sharps(event.note as i32, total_transpose)
-                        }
-                    }
-                }
-                KeyMode::Keys21 => {
-                    // 21-key mode - use note mode to determine mapping
-                    match current_note_mode {
-                        NoteMode::Closest => note_to_key(event.note as i32, total_transpose),
-                        NoteMode::Quantize => {
-                            note_to_key_quantize(event.note as i32, total_transpose)
-                        }
-                        NoteMode::TransposeOnly => {
-                            note_to_key_transpose(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Pentatonic => {
-                            note_to_key_pentatonic(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Chromatic => {
-                            note_to_key_chromatic(event.note as i32, total_transpose)
-                        }
-                        NoteMode::Raw => note_to_key_raw(event.note as i32 + shift_semitones),
-                        NoteMode::Python => note_to_key_python(event.note as i32, total_transpose),
-                        NoteMode::Wide => note_to_key_wide(event.note as i32, total_transpose),
-                        NoteMode::Sharps => note_to_key(event.note as i32, total_transpose), // Falls back to Closest in 21-key
-                    }
-                }
-            };
-
-            match event.event_type {
-                EventType::NoteOn => {
-                    // Check band filter - read live for instant track switching
-                    let current_filter = band_filter.lock().unwrap().clone();
-                    let should_play = match &current_filter {
-                        Some(BandFilter::Split {
-                            slot,
-                            total_players,
-                        }) => {
-                            // In split mode, play every Nth note starting from slot
-                            let play = (note_on_counter % total_players) == *slot;
-                            note_on_counter += 1;
-                            play
-                        }
-                        Some(BandFilter::Track { track_id }) => {
-                            // Track mode: only play notes from the assigned track
-                            event.track_id == *track_id
-                        }
-                        None => true, // No filter, play all
-                    };
-
-                    if should_play {
-                        // Simple press-release for each note (game doesn't need hold)
-                        let note_send_start = Instant::now();
-                        crate::keyboard::key_down(&key);
-                        crate::keyboard::key_up(&key);
-                        let latency_ms = note_send_start.elapsed().as_secs_f64() * 1000.0;
-                        diagnostics.notes_sent += 1;
-                        diagnostics.total_note_send_latency_ms += latency_ms;
-                        diagnostics.max_note_send_latency_ms =
-                            diagnostics.max_note_send_latency_ms.max(latency_ms);
-
-                        // Emit note event for visualizer
-                        let _ = window.emit("note-event", &key);
-                        if diagnostics.notes_sent % 128 == 0 {
-                            emit_playback_diagnostics(&window, &diagnostics, "periodic");
-                        }
-                    } else {
-                        diagnostics.notes_filtered += 1;
-                    }
-                }
-                EventType::NoteOff => {
-                    // Ignore note off - we already released on note on
+            let result = crate::keyboard::tap_chord(&chord.keys);
+            diagnostics.notes_accepted_by_api += result.notes_accepted_by_api as u64;
+            if !result.success {
+                diagnostics.input_failures += 1;
+            }
+            if result.success {
+                for key in &chord.keys {
+                    let _ = window.emit("note-event", key);
                 }
             }
+            if diagnostics.notes_attempted % 128 < chord.keys.len() as u64 {
+                emit_playback_diagnostics(&window, &diagnostics, "periodic");
+            }
+            *current_position.lock().unwrap() = chord.time_us as f64 / 1_000_000.0;
         }
 
-        // Release all remaining keys
-        release_all_keys(&key_active_count);
+        let _ = crate::keyboard::release_all_modifiers();
         emit_playback_diagnostics(&window, &diagnostics, "loop-complete");
-
         if !loop_mode.load(Ordering::SeqCst) {
             break;
         }
-
-        // Reset position to 0 for loop restart
         *seek_offset.lock().unwrap() = 0.0;
         *current_position.lock().unwrap() = 0.0;
-
-        std::thread::sleep(Duration::from_millis(500));
     }
 
     is_playing.store(false, Ordering::SeqCst);
     let _ = window.emit("playback-ended", ());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(time_us: u64, note: u8, track_id: usize, channel: u8) -> TimedEvent {
+        TimedEvent {
+            time_us,
+            event_type: EventType::NoteOn,
+            note,
+            velocity: 90,
+            channel,
+            track_id,
+        }
+    }
+
+    #[test]
+    fn tempo_map_is_ppqn_independent_and_preserves_changes() {
+        for ppqn in [96, 480, 960] {
+            let changes = vec![(ppqn, 1_000_000, 0, 0)];
+            let map = TempoMap::new(ppqn, &changes);
+            assert_eq!(map.ticks_to_us(ppqn), 500_000);
+            assert_eq!(map.ticks_to_us(ppqn * 2), 1_500_000);
+        }
+    }
+
+    #[test]
+    fn exact_36_mode_never_applies_the_old_sharps_shift() {
+        for legacy_mode in [
+            NoteMode::Python,
+            NoteMode::Closest,
+            NoteMode::Chromatic,
+            NoteMode::TransposeOnly,
+            NoteMode::Sharps,
+            NoteMode::Exact,
+        ] {
+            assert_eq!(
+                map_note_to_key(60, 0, legacy_mode, KeyMode::Keys36, false).unwrap(),
+                "a"
+            );
+        }
+    }
+
+    #[test]
+    fn melody_selection_uses_track_context_and_limits_chords() {
+        let notes = vec![
+            event(0, 36, 0, 0),
+            event(0, 48, 0, 0),
+            event(0, 60, 1, 0),
+            event(0, 64, 1, 0),
+            event(0, 67, 1, 0),
+            event(500_000, 62, 1, 0),
+        ];
+        let selected = select_single_instrument_voice(&notes, Some(1), 3, None);
+        assert!(selected.iter().any(|note| note.note == 67));
+        assert!(selected.iter().any(|note| note.note == 62));
+        assert_eq!(selected.iter().filter(|note| note.time_us == 0).count(), 3);
+    }
+
+    #[test]
+    fn general_midi_percussion_is_not_selected() {
+        let notes = [event(0, 60, 0, 0), event(0, 38, 1, 9)];
+        let pitched: Vec<_> = notes
+            .iter()
+            .copied()
+            .filter(|note| note.channel != 9)
+            .collect();
+        let selected = select_single_instrument_voice(&pitched, Some(0), 3, None);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].note, 60);
+    }
+
+    #[test]
+    fn peak_onset_rate_uses_a_sliding_one_second_window() {
+        let notes = [
+            event(900_000, 60, 0, 0),
+            event(950_000, 62, 0, 0),
+            event(1_050_000, 64, 0, 0),
+            event(1_100_000, 65, 0, 0),
+        ];
+        assert_eq!(peak_onset_rate(&notes), 4);
+    }
+
+    #[test]
+    fn continuity_prefers_nearby_melody_notes() {
+        let candidates = vec![event(0, 62, 0, 0), event(0, 84, 0, 0)];
+        assert_eq!(
+            choose_continuous_melody(&candidates, Some(60))
+                .unwrap()
+                .note,
+            62
+        );
+    }
+
+    #[test]
+    fn rejects_format_two_with_actionable_message() {
+        let smf = Smf {
+            header: midly::Header::new(
+                Format::Sequential,
+                Timing::Metrical(midly::num::u15::new(480)),
+            ),
+            tracks: Vec::new(),
+        };
+        let error = validated_timing_and_tempo(&smf).unwrap_err();
+        assert!(error.contains("format 2"));
+        assert!(error.contains("format 0 or 1"));
+    }
+
+    #[test]
+    fn rejects_smpte_timing_with_actionable_message() {
+        let smf = Smf {
+            header: midly::Header::new(
+                Format::SingleTrack,
+                Timing::Timecode(midly::Fps::Fps30, 80),
+            ),
+            tracks: Vec::new(),
+        };
+        let error = validated_timing_and_tempo(&smf).unwrap_err();
+        assert!(error.contains("SMPTE"));
+        assert!(error.contains("PPQN"));
+    }
 }

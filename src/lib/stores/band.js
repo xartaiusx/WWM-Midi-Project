@@ -8,9 +8,13 @@ import {
   noteMode,
   keyMode,
   octaveShift,
+  transposeSemitones,
+  octaveFit,
   setNoteMode,
   setKeyMode,
   setOctaveShift,
+  setTransposeSemitones,
+  setOctaveFit,
   setSpeed
 } from './player.js';
 
@@ -22,7 +26,9 @@ function saveOriginalSettings() {
     speed: get(speed),
     noteMode: get(noteMode),
     keyMode: get(keyMode),
-    octaveShift: get(octaveShift)
+    octaveShift: get(octaveShift),
+    transposeSemitones: get(transposeSemitones),
+    octaveFit: get(octaveFit)
   };
   console.log('[BAND] Saved original settings:', originalSettings);
 }
@@ -34,6 +40,8 @@ async function restoreOriginalSettings() {
     await setNoteMode(originalSettings.noteMode);
     await setKeyMode(originalSettings.keyMode);
     await setOctaveShift(originalSettings.octaveShift);
+    await setTransposeSemitones(originalSettings.transposeSemitones ?? 0);
+    await setOctaveFit(originalSettings.octaveFit ?? true);
     originalSettings = null;
   }
 }
@@ -662,7 +670,9 @@ export function broadcastSettings() {
       speed: get(speed),
       noteMode: get(noteMode),
       keyMode: get(keyMode),
-      octaveShift: get(octaveShift)
+      octaveShift: get(octaveShift),
+      transposeSemitones: get(transposeSemitones),
+      octaveFit: get(octaveFit)
     }
   };
 
@@ -680,6 +690,8 @@ async function handleSettingsSync(data) {
   await setNoteMode(settings.noteMode);
   await setKeyMode(settings.keyMode);
   await setOctaveShift(settings.octaveShift);
+  await setTransposeSemitones(settings.transposeSemitones ?? 0);
+  await setOctaveFit(settings.octaveFit ?? true);
 }
 
 // Set band play mode (host only)
@@ -800,7 +812,9 @@ export function bandPlay(position = 0) {
       speed: get(speed),
       noteMode: get(noteMode),
       keyMode: get(keyMode),
-      octaveShift: get(octaveShift)
+      octaveShift: get(octaveShift),
+      transposeSemitones: get(transposeSemitones),
+      octaveFit: get(octaveFit)
     }
   };
 
@@ -879,7 +893,9 @@ export function bandSeek(position) {
       speed: get(speed),
       noteMode: get(noteMode),
       keyMode: get(keyMode),
-      octaveShift: get(octaveShift)
+      octaveShift: get(octaveShift),
+      transposeSemitones: get(transposeSemitones),
+      octaveFit: get(octaveFit)
     }
   };
 
@@ -900,6 +916,8 @@ async function handlePlayCommand(data) {
     await setNoteMode(settings.noteMode);
     await setKeyMode(settings.keyMode);
     await setOctaveShift(settings.octaveShift);
+    await setTransposeSemitones(settings.transposeSemitones ?? 0);
+    await setOctaveFit(settings.octaveFit ?? true);
   }
 
   // Host adds extra delay to let members receive and process the command
@@ -1060,6 +1078,8 @@ async function handleSeekCommand(data) {
     await setNoteMode(settings.noteMode);
     await setKeyMode(settings.keyMode);
     await setOctaveShift(settings.octaveShift);
+    await setTransposeSemitones(settings.transposeSemitones ?? 0);
+    await setOctaveFit(settings.octaveFit ?? true);
   }
 
   const { seekTo } = await import('./player.js');

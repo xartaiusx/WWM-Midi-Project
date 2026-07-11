@@ -1,8 +1,9 @@
 import path from 'node:path'
+import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, symlink } from 'node:fs/promises'
 import { rmSync } from 'node:fs'
 import crypto from 'node:crypto'
 import { describe, expect, it } from 'vitest'
@@ -10,8 +11,17 @@ import { describe, expect, it } from 'vitest'
 const execFileAsync = promisify(execFile)
 const scriptPath = path.resolve('scripts/buildComponent.mjs')
 const testsDir = path.dirname(fileURLToPath(import.meta.url))
-const smokeBundlesDir = path.resolve(testsDir, '..', '..', '.temp', 'components-smoke')
-const ensureBundlesDir = mkdir(smokeBundlesDir, { recursive: true })
+const smokeBundlesDir = path.join(os.tmpdir(), 'wwm-midi-components-smoke')
+const smokeNodeModules = path.join(smokeBundlesDir, 'node_modules')
+const projectNodeModules = path.resolve('node_modules')
+const ensureBundlesDir = (async () => {
+  await mkdir(smokeBundlesDir, { recursive: true })
+  try {
+    await symlink(projectNodeModules, smokeNodeModules, 'junction')
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error
+  }
+})()
 const tempFiles = new Set()
 const tauriStub = {
   invoke: async () => ({}),
@@ -34,6 +44,7 @@ const components = [
   { label: 'src/lib/components/FavoritesView.svelte', path: '../lib/components/FavoritesView.svelte' },
   { label: 'src/lib/components/Header.svelte', path: '../lib/components/Header.svelte' },
   { label: 'src/lib/components/KeyboardDisplay.svelte', path: '../lib/components/KeyboardDisplay.svelte' },
+  { label: 'src/lib/components/KonghouCalibration.svelte', path: '../lib/components/KonghouCalibration.svelte' },
   { label: 'src/lib/components/LibraryShare.svelte', path: '../lib/components/LibraryShare.svelte' },
   { label: 'src/lib/components/LivePlayView.svelte', path: '../lib/components/LivePlayView.svelte' },
   { label: 'src/lib/components/MidiFileList.svelte', path: '../lib/components/MidiFileList.svelte' },

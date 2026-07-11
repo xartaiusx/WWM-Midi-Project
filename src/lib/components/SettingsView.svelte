@@ -6,12 +6,19 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, onDestroy } from "svelte";
+  import KonghouCalibration from "./KonghouCalibration.svelte";
   import { t } from "svelte-i18n";
   import {
     noteMode,
     setNoteMode,
     keyMode,
     setKeyMode,
+    transposeSemitones,
+    setTransposeSemitones,
+    octaveFit,
+    setOctaveFit,
+    compatibilityReport,
+    playbackDiagnostics,
     testAllKeys,
     testAllKeys36,
     smartPause,
@@ -129,6 +136,7 @@
     { id: "window", label: $t("settings.window.title"), icon: "mdi:application-outline", keywords: ["window", "detection", "process", "game"] },
     { id: "notemode", label: $t("noteMode.title"), icon: "mdi:music-note", keywords: ["note", "mode", "calculation", "mapping"] },
     { id: "keystyle", label: $t("settings.keyStyle.title"), icon: "mdi:piano", keywords: ["key", "style", "play", "21", "36"] },
+    { id: "calibration", label: "Konghou calibration", icon: "mdi:waveform", keywords: ["konghou", "calibration", "wasapi", "pitch", "timing", "drift"] },
     { id: "keyboard", label: $t("settings.keyboard.title"), icon: "mdi:piano", keywords: ["keyboard", "qwertz", "azerty", "layout", "keys", "notes"] },
     { id: "cloud", label: $t("settings.playback.cloudMode"), icon: "mdi:cloud", keywords: ["cloud", "gaming", "geforce", "input"] },
     { id: "storage", label: $t("settings.storage.title"), icon: "mdi:folder", keywords: ["storage", "album", "folder", "path"] },
@@ -537,17 +545,23 @@
   }
 
   // Note calculation mode options (reactive for i18n)
-  $: noteModesList = [
-    { id: "Python", name: $t("noteMode.recommended"), description: $t("noteMode.recommendedDesc"), rmd21: true },
-    { id: "Closest", name: $t("noteMode.closest"), description: $t("noteMode.closestDesc") },
-    { id: "Wide", name: $t("noteMode.wide"), description: $t("noteMode.wideDesc") },
-    { id: "Sharps", name: $t("noteMode.sharps"), description: $t("noteMode.sharpsDesc"), rmd36: true },
-    { id: "Quantize", name: $t("noteMode.quantize"), description: $t("noteMode.quantizeDesc") },
-    { id: "TransposeOnly", name: $t("noteMode.transposeOnly"), description: $t("noteMode.transposeOnlyDesc") },
-    { id: "Pentatonic", name: $t("noteMode.pentatonic"), description: $t("noteMode.pentatonicDesc") },
-    { id: "Chromatic", name: $t("noteMode.chromatic"), description: $t("noteMode.chromaticDesc") },
-    { id: "Raw", name: $t("noteMode.raw"), description: $t("noteMode.rawDesc") },
-  ];
+  $: noteModesList = $keyMode === 'Keys36'
+    ? [{
+        id: "Exact",
+        name: "Konghou Exact 36",
+        description: "Exact chromatic pitch mapping with explicit transpose and pitch-preserving octave fit.",
+        rmd36: true
+      }]
+    : [
+        { id: "Python", name: $t("noteMode.recommended"), description: $t("noteMode.recommendedDesc"), rmd21: true },
+        { id: "Closest", name: $t("noteMode.closest"), description: $t("noteMode.closestDesc") },
+        { id: "Wide", name: $t("noteMode.wide"), description: $t("noteMode.wideDesc") },
+        { id: "Quantize", name: $t("noteMode.quantize"), description: $t("noteMode.quantizeDesc") },
+        { id: "TransposeOnly", name: $t("noteMode.transposeOnly"), description: $t("noteMode.transposeOnlyDesc") },
+        { id: "Pentatonic", name: $t("noteMode.pentatonic"), description: $t("noteMode.pentatonicDesc") },
+        { id: "Chromatic", name: $t("noteMode.chromatic"), description: $t("noteMode.chromaticDesc") },
+        { id: "Raw", name: $t("noteMode.raw"), description: $t("noteMode.rawDesc") },
+      ];
 
   // Reactive: show RMD based on key mode
   $: noteModes = noteModesList.map(m => ({
@@ -829,6 +843,82 @@
         {/each}
       </div>
 
+      {#if $keyMode === 'Keys36'}
+        <div class="mt-4 pt-4 border-t border-white/10 space-y-4">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="font-medium text-white">Explicit transpose</p>
+              <p class="text-sm text-white/60">Semitones applied once before exact key mapping.</p>
+            </div>
+            <div class="flex items-center gap-1" aria-label="Explicit semitone transpose">
+              <button
+                class="w-8 h-8 flex items-center justify-center rounded-md bg-white/10 hover:bg-white/15 disabled:opacity-30"
+                onclick={() => setTransposeSemitones($transposeSemitones - 1)}
+                disabled={$transposeSemitones <= -24}
+                title="Transpose down one semitone"
+              >
+                <Icon icon="mdi:minus" class="w-4 h-4" />
+              </button>
+              <input
+                class="w-14 h-8 bg-transparent text-center font-mono text-sm focus:outline-none"
+                type="number"
+                min="-24"
+                max="24"
+                value={$transposeSemitones}
+                onchange={(event) => setTransposeSemitones(event.currentTarget.valueAsNumber)}
+                aria-label="Transpose semitones"
+              />
+              <button
+                class="w-8 h-8 flex items-center justify-center rounded-md bg-white/10 hover:bg-white/15 disabled:opacity-30"
+                onclick={() => setTransposeSemitones($transposeSemitones + 1)}
+                disabled={$transposeSemitones >= 24}
+                title="Transpose up one semitone"
+              >
+                <Icon icon="mdi:plus" class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="font-medium text-white">Pitch-preserving octave fit</p>
+              <p class="text-sm text-white/60">Moves out-of-range notes only by multiples of 12 semitones.</p>
+            </div>
+            <button
+              class="relative w-12 h-6 rounded-full transition-colors {$octaveFit ? 'bg-[#1db954]' : 'bg-white/20'}"
+              onclick={() => setOctaveFit(!$octaveFit)}
+              aria-label="Pitch-preserving octave fit"
+              aria-pressed={$octaveFit}
+            >
+              <span class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform {$octaveFit ? 'translate-x-7' : 'translate-x-1'}"></span>
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if $compatibilityReport}
+        <div class="mt-4 pt-4 border-t border-white/10">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <Icon icon={$compatibilityReport.supported ? 'mdi:check-decagram' : 'mdi:alert-circle'} class="w-5 h-5 {$compatibilityReport.supported ? 'text-[#1db954]' : 'text-red-400'}" />
+              <div>
+                <p class="font-medium capitalize">{$compatibilityReport.expected_quality} compatibility</p>
+                <p class="text-xs text-white/50">{$compatibilityReport.smf_format} · {$compatibilityReport.timing}</p>
+              </div>
+            </div>
+            <span class="text-xl font-semibold tabular-nums">{$compatibilityReport.score}/100</span>
+          </div>
+          <div class="grid grid-cols-3 gap-3 mt-3 text-xs text-white/60">
+            <span>{$compatibilityReport.playable_note_count} playable notes</span>
+            <span>{$compatibilityReport.maximum_chord_size} max chord</span>
+            <span>{$compatibilityReport.peak_onsets_per_second}/s peak</span>
+          </div>
+          {#if $playbackDiagnostics?.input_failures > 0}
+            <p class="text-xs text-red-300 mt-3">{$playbackDiagnostics.input_failures} Windows input batch failures were reported during the last playback.</p>
+          {/if}
+        </div>
+      {/if}
+
     </div>
 
     <!-- Key Mode Section (Play Style) -->
@@ -986,6 +1076,18 @@
           </div>
         </div>
       {/if}
+    </div>
+
+    <div
+      id="settings-calibration"
+      class="bg-white/5 rounded-xl p-4 scroll-mt-4"
+      in:fly={{ y: 10, duration: 200, delay: 100 }}
+    >
+      <div class="flex items-center gap-2 mb-4">
+        <Icon icon="mdi:waveform" class="w-5 h-5 text-[#1db954]" />
+        <h3 class="text-lg font-semibold">Konghou calibration</h3>
+      </div>
+      <KonghouCalibration />
     </div>
 
     <!-- Keyboard Layout / Note Keys -->

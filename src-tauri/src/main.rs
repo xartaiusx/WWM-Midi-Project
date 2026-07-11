@@ -519,10 +519,13 @@ fn run_audio_midi_setup_script() -> Result<serde_json::Value, String> {
     }))
 }
 
+mod calibration;
 mod discovery;
+mod instrument;
 mod keyboard;
 mod midi;
 mod midi_input;
+mod scheduler;
 mod state;
 
 use state::{AppState, PlaybackState, VisualizerNote};
@@ -1004,6 +1007,15 @@ async fn get_midi_tracks(path: String) -> Result<Vec<midi::MidiTrackInfo>, Strin
 }
 
 #[tauri::command]
+async fn prepare_midi(
+    path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<midi::CompatibilityReport, String> {
+    let mut app_state = state.lock().unwrap();
+    app_state.prepare_midi(&path)
+}
+
+#[tauri::command]
 async fn play_midi(
     path: String,
     state: State<'_, Arc<Mutex<AppState>>>,
@@ -1013,10 +1025,6 @@ async fn play_midi(
     app_state.stop_playback();
     app_state.load_midi(&path)?;
     app_state.start_playback(window)?;
-    drop(app_state);
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let _ = keyboard::focus_black_desert_window();
 
     Ok(())
 }
@@ -1039,10 +1047,6 @@ async fn play_midi_band(
     app_state.set_band_filter(mode, slot, total_players, track_id);
 
     app_state.start_playback(window)?;
-    drop(app_state);
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let _ = keyboard::focus_black_desert_window();
 
     Ok(())
 }
@@ -1129,6 +1133,35 @@ async fn get_octave_shift(state: State<'_, Arc<Mutex<AppState>>>) -> Result<i8, 
 }
 
 #[tauri::command]
+async fn set_transpose_semitones(
+    semitones: i8,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut app_state = state.lock().unwrap();
+    app_state.set_transpose_semitones(semitones);
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_transpose_semitones(state: State<'_, Arc<Mutex<AppState>>>) -> Result<i8, String> {
+    Ok(state.lock().unwrap().get_transpose_semitones())
+}
+
+#[tauri::command]
+async fn set_octave_fit(
+    enabled: bool,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    state.lock().unwrap().set_octave_fit(enabled);
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_octave_fit(state: State<'_, Arc<Mutex<AppState>>>) -> Result<bool, String> {
+    Ok(state.lock().unwrap().get_octave_fit())
+}
+
+#[tauri::command]
 async fn set_speed(speed: f64, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut app_state = state.lock().unwrap();
     app_state.set_speed(speed);
@@ -1194,6 +1227,69 @@ async fn set_modifier_delay(delay_ms: u64) -> Result<(), String> {
 #[tauri::command]
 async fn get_modifier_delay() -> Result<u64, String> {
     Ok(keyboard::get_modifier_delay())
+}
+
+#[tauri::command]
+async fn set_input_timing(timing: keyboard::InputTiming) -> Result<(), String> {
+    keyboard::set_input_timing(timing);
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_input_timing() -> Result<keyboard::InputTiming, String> {
+    Ok(keyboard::get_input_timing())
+}
+
+#[tauri::command]
+async fn run_konghou_calibration(
+    kind: calibration::CalibrationKind,
+) -> Result<calibration::CalibrationReport, String> {
+    let album_dir = get_album_folder()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        calibration::run_konghou_calibration(kind, &album_dir)
+    })
+    .await
+    .map_err(|error| format!("Calibration task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn get_konghou_calibration() -> Result<Option<calibration::CalibrationReport>, String> {
+    let path = get_album_folder()?.join(".konghou-calibration.local.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("Failed to read local Konghou calibration: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| format!("Failed to parse local Konghou calibration: {error}"))
+}
+
+#[tauri::command]
+async fn cancel_konghou_calibration() -> Result<(), String> {
+    calibration::cancel_konghou_calibration();
+    Ok(())
+}
+
+fn load_saved_konghou_calibration() {
+    let Ok(album_dir) = get_album_folder() else {
+        return;
+    };
+    let timing_path = album_dir.join(".konghou-calibration-timing-stress.local.json");
+    let path = if timing_path.exists() {
+        timing_path
+    } else {
+        album_dir.join(".konghou-calibration.local.json")
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let Ok(report) = serde_json::from_slice::<calibration::CalibrationReport>(&bytes) else {
+        return;
+    };
+    if report.passed && matches!(report.kind, calibration::CalibrationKind::TimingStress) {
+        keyboard::set_input_timing(report.recommended_input_timing);
+    }
 }
 
 #[tauri::command]
@@ -3602,10 +3698,15 @@ async fn simulate_midi_note(
     let live_transpose = app_state.live_transpose.load(Ordering::SeqCst);
 
     // Calculate total transpose
-    let total_transpose = (octave_shift as i32 * 12) + (live_transpose as i32);
+    let total_transpose = live_transpose as i32
+        + if key_mode == midi::KeyMode::Keys21 {
+            octave_shift as i32 * 12
+        } else {
+            0
+        };
 
     // Map note to key
-    let key = midi_input::map_note_to_key(midi_note as i32, total_transpose, note_mode, key_mode);
+    let key = midi_input::map_note_to_key(midi_note as i32, total_transpose, note_mode, key_mode)?;
 
     // Get note name
     let note_names = [
@@ -3617,28 +3718,19 @@ async fn simulate_midi_note(
         (midi_note / 12) as i32 - 1
     );
 
+    let input_result = keyboard::tap_chord(std::slice::from_ref(&key));
+
     // Create event for frontend
     let event = LiveNoteEvent {
         midi_note,
         key: key.clone(),
         note_name: note_name.clone(),
         velocity: 100,
+        accepted_by_api: input_result.success,
     };
 
     // Emit to frontend
     let _ = app_handle.emit("live-note", &event);
-
-    // Actually press the key (instant tap like MIDI playback)
-    keyboard::key_down(&key);
-
-    // Release in background thread (non-blocking, same as live MIDI input)
-    std::thread::spawn({
-        let key = key.clone();
-        move || {
-            std::thread::sleep(std::time::Duration::from_millis(30));
-            keyboard::key_up(&key);
-        }
-    });
 
     Ok(event)
 }
@@ -3656,6 +3748,7 @@ fn main() {
     load_custom_window_keywords();
     load_saved_cloud_mode();
     load_saved_keybindings();
+    load_saved_konghou_calibration();
 
     let app_state = Arc::new(Mutex::new(AppState::new()));
 
@@ -3672,6 +3765,7 @@ fn main() {
             count_midi_files,
             get_library_info,
             get_midi_tracks,
+            prepare_midi,
             play_midi,
             play_midi_band,
             pause_resume,
@@ -3686,10 +3780,19 @@ fn main() {
             get_key_mode,
             set_octave_shift,
             get_octave_shift,
+            set_transpose_semitones,
+            get_transpose_semitones,
+            set_octave_fit,
+            get_octave_fit,
             set_speed,
             get_speed,
             set_modifier_delay,
             get_modifier_delay,
+            set_input_timing,
+            get_input_timing,
+            run_konghou_calibration,
+            get_konghou_calibration,
+            cancel_konghou_calibration,
             set_cloud_mode,
             get_cloud_mode,
             set_note_keys,

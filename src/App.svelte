@@ -337,6 +337,8 @@
     setKeyMode,
     octaveShift,
     setOctaveShift,
+    transposeSemitones,
+    setTransposeSemitones,
     speed,
     setSpeed,
     availableTracks,
@@ -351,17 +353,18 @@
 
 
   // Note mode options for quick selector (reactive for i18n)
-  $: noteModeOptionsList = [
-    { id: "Python", title: $t("noteMode.recommended"), short: "REC", icon: "mdi:star", desc: $t("noteMode.recommendedDesc"), rmd21: true },
-    { id: "Closest", title: $t("noteMode.closest"), short: "CLS", icon: "mdi:target", desc: $t("noteMode.closestDesc") },
-    { id: "Wide", title: $t("noteMode.wide"), short: "WDE", icon: "mdi:arrow-expand-horizontal", desc: $t("noteMode.wideDesc") },
-    { id: "Sharps", title: $t("noteMode.sharps"), short: "SHP", icon: "mdi:music-accidental-sharp", desc: $t("noteMode.sharpsDesc"), rmd36: true },
-    { id: "Quantize", title: $t("noteMode.quantize"), short: "QNT", icon: "mdi:grid", desc: $t("noteMode.quantizeDesc") },
-    { id: "TransposeOnly", title: $t("noteMode.transposeOnly"), short: "TRP", icon: "mdi:arrow-up-down", desc: $t("noteMode.transposeOnlyDesc") },
-    { id: "Pentatonic", title: $t("noteMode.pentatonic"), short: "PEN", icon: "mdi:music", desc: $t("noteMode.pentatonicDesc") },
-    { id: "Chromatic", title: $t("noteMode.chromatic"), short: "CHR", icon: "mdi:piano", desc: $t("noteMode.chromaticDesc") },
-    { id: "Raw", title: $t("noteMode.raw"), short: "RAW", icon: "mdi:code-braces", desc: $t("noteMode.rawDesc") },
-  ];
+  $: noteModeOptionsList = $keyMode === 'Keys36'
+    ? [{ id: "Exact", title: "Konghou Exact 36", short: "EXA", icon: "mdi:music-accidental-sharp", desc: "Exact chromatic mapping", rmd36: true }]
+    : [
+        { id: "Python", title: $t("noteMode.recommended"), short: "REC", icon: "mdi:star", desc: $t("noteMode.recommendedDesc"), rmd21: true },
+        { id: "Closest", title: $t("noteMode.closest"), short: "CLS", icon: "mdi:target", desc: $t("noteMode.closestDesc") },
+        { id: "Wide", title: $t("noteMode.wide"), short: "WDE", icon: "mdi:arrow-expand-horizontal", desc: $t("noteMode.wideDesc") },
+        { id: "Quantize", title: $t("noteMode.quantize"), short: "QNT", icon: "mdi:grid", desc: $t("noteMode.quantizeDesc") },
+        { id: "TransposeOnly", title: $t("noteMode.transposeOnly"), short: "TRP", icon: "mdi:arrow-up-down", desc: $t("noteMode.transposeOnlyDesc") },
+        { id: "Pentatonic", title: $t("noteMode.pentatonic"), short: "PEN", icon: "mdi:music", desc: $t("noteMode.pentatonicDesc") },
+        { id: "Chromatic", title: $t("noteMode.chromatic"), short: "CHR", icon: "mdi:piano", desc: $t("noteMode.chromaticDesc") },
+        { id: "Raw", title: $t("noteMode.raw"), short: "RAW", icon: "mdi:code-braces", desc: $t("noteMode.rawDesc") },
+      ];
 
   // Reactive: show RMD based on key mode
   $: noteModeOptions = noteModeOptionsList.map(m => ({
@@ -375,9 +378,16 @@
   let showLanguageMenu = false;
   let showVisualizer = false;
   let showUpdateModal = false;
+  let showAssistAcknowledgment = false;
   let showLargeLibraryModal = false;
   let showCloseConfirmModal = false;
   let largeLibraryCount = 0;
+  const ASSIST_ACKNOWLEDGMENT_KEY = 'wwm-third-party-assist-ack-v1';
+
+  function acceptAssistAcknowledgment() {
+    localStorage.setItem(ASSIST_ACKNOWLEDGMENT_KEY, 'acknowledged');
+    showAssistAcknowledgment = false;
+  }
 
   // Load tracks when current file changes
   $: if ($currentFile) {
@@ -555,6 +565,7 @@
   }
 
   onMount(async () => {
+    showAssistAcknowledgment = localStorage.getItem(ASSIST_ACKNOWLEDGMENT_KEY) !== 'acknowledged';
     await loadWindowPosition(); // Restore window position
     await loadAlwaysOnTop(); // Restore always on top setting
     initUserLocales(); // Initialize user locale files (async, don't await)
@@ -1056,21 +1067,33 @@
                 <span>{$keyMode === 'Keys21' ? '21' : '36'}</span>
               </button>
 
-              <!-- Octave -->
-              <div class="flex items-center gap-1 px-1 py-0.5 rounded-md bg-white/5">
-                <button class="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30" onclick={() => setOctaveShift($octaveShift - 1)} disabled={$octaveShift <= -2} title="Lower octave">
-                  <Icon icon="mdi:minus" class="w-3 h-3" />
-                </button>
-                <span class="text-xs font-mono w-6 text-center {$octaveShift === 0 ? 'text-white/50' : $octaveShift > 0 ? 'text-[#1db954]' : 'text-orange-400'}" title="Octave shift">{$octaveShift > 0 ? '+' : ''}{$octaveShift}</span>
-                <button class="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30" onclick={() => setOctaveShift($octaveShift + 1)} disabled={$octaveShift >= 2} title="Higher octave">
-                  <Icon icon="mdi:plus" class="w-3 h-3" />
-                </button>
-              </div>
+              <!-- Pitch -->
+              {#if $keyMode === 'Keys36'}
+                <div class="flex items-center gap-1 px-1 py-0.5 rounded-md bg-white/5">
+                  <button class="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30" onclick={() => setTransposeSemitones($transposeSemitones - 1)} disabled={$transposeSemitones <= -24} title="Transpose down one semitone">
+                    <Icon icon="mdi:minus" class="w-3 h-3" />
+                  </button>
+                  <span class="text-xs font-mono w-8 text-center {$transposeSemitones === 0 ? 'text-white/50' : $transposeSemitones > 0 ? 'text-[#1db954]' : 'text-orange-400'}" title="Explicit semitone transpose">{$transposeSemitones > 0 ? '+' : ''}{$transposeSemitones}</span>
+                  <button class="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30" onclick={() => setTransposeSemitones($transposeSemitones + 1)} disabled={$transposeSemitones >= 24} title="Transpose up one semitone">
+                    <Icon icon="mdi:plus" class="w-3 h-3" />
+                  </button>
+                </div>
+              {:else}
+                <div class="flex items-center gap-1 px-1 py-0.5 rounded-md bg-white/5">
+                  <button class="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30" onclick={() => setOctaveShift($octaveShift - 1)} disabled={$octaveShift <= -2} title="Lower octave">
+                    <Icon icon="mdi:minus" class="w-3 h-3" />
+                  </button>
+                  <span class="text-xs font-mono w-6 text-center {$octaveShift === 0 ? 'text-white/50' : $octaveShift > 0 ? 'text-[#1db954]' : 'text-orange-400'}" title="Legacy octave shift">{$octaveShift > 0 ? '+' : ''}{$octaveShift}</span>
+                  <button class="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30" onclick={() => setOctaveShift($octaveShift + 1)} disabled={$octaveShift >= 2} title="Higher octave">
+                    <Icon icon="mdi:plus" class="w-3 h-3" />
+                  </button>
+                </div>
+              {/if}
 
               <!-- Mode -->
               <div class="relative">
                 <button
-                  class="flex items-center gap-1 px-2 py-1 rounded-md transition-colors text-xs font-medium {$noteMode === 'Python' ? 'bg-pink-500/20 text-pink-400' : 'text-white/50 hover:text-white hover:bg-white/5'}"
+                  class="flex items-center gap-1 px-2 py-1 rounded-md transition-colors text-xs font-medium {$noteMode === 'Exact' ? 'bg-[#1db954]/20 text-[#1db954]' : $noteMode === 'Python' ? 'bg-pink-500/20 text-pink-400' : 'text-white/50 hover:text-white hover:bg-white/5'}"
                   onclick={() => showModeMenu = !showModeMenu}
                   title="Note calculation mode"
                 >
@@ -1249,6 +1272,30 @@
       {/if}
     </div>
   </main>
+{/if}
+
+{#if showAssistAcknowledgment}
+  <div class="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4" in:fade={{ duration: 150 }}>
+    <div class="w-full max-w-lg rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="assist-warning-title" in:scale={{ duration: 180, start: 0.96 }}>
+      <div class="flex items-start gap-3">
+        <Icon icon="mdi:shield-alert-outline" class="w-7 h-7 text-orange-400 flex-shrink-0" />
+        <div>
+          <h2 id="assist-warning-title" class="text-lg font-semibold text-white">Third-party assist acknowledgment</h2>
+          <p class="mt-2 text-sm leading-6 text-white/70">
+            Where Winds Meet identifies macros and similar third-party assists as potentially punishable. Automated performance may put an account at risk. This project does not provide stealth, anti-cheat evasion, memory access, or packet manipulation.
+          </p>
+        </div>
+      </div>
+      <div class="mt-5 flex gap-3">
+        <button class="flex-1 rounded-md bg-white/10 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/15" onclick={() => invoke('open_url', { url: 'https://www.wherewindsmeetgame.com/news/official/BanReport.html' })}>
+          Official notice
+        </button>
+        <button class="flex-1 rounded-md bg-[#1db954] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1ed760]" onclick={acceptAssistAcknowledgment}>
+          I understand and continue
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <!-- Update Modal -->

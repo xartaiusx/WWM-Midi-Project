@@ -1,15 +1,80 @@
 // Virtual keyboard input using PostMessage to game window
 // Sends WM_KEYDOWN/WM_KEYUP directly - doesn't affect other apps!
 
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-// Configurable modifier delay in milliseconds (default 0ms = instant)
-static MODIFIER_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+// Conservative defaults until a local Konghou calibration supersedes them.
+static MODIFIER_DELAY_MS: AtomicU64 = AtomicU64::new(2);
+static TAP_DURATION_MS: AtomicU64 = AtomicU64::new(12);
+static MODIFIER_RELEASE_DELAY_MS: AtomicU64 = AtomicU64::new(2);
 
 // Input mode: false = PostMessage (default), true = SendInput (for cloud gaming)
 static USE_SEND_INPUT: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputMode {
+    PostMessage,
+    SendInput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputTiming {
+    pub modifier_lead_ms: u64,
+    pub tap_ms: u64,
+    pub modifier_release_ms: u64,
+}
+
+impl Default for InputTiming {
+    fn default() -> Self {
+        Self {
+            modifier_lead_ms: MODIFIER_DELAY_MS.load(Ordering::SeqCst),
+            tap_ms: TAP_DURATION_MS.load(Ordering::SeqCst),
+            modifier_release_ms: MODIFIER_RELEASE_DELAY_MS.load(Ordering::SeqCst),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputResult {
+    pub success: bool,
+    pub mode: InputMode,
+    pub notes_attempted: usize,
+    pub notes_accepted_by_api: usize,
+    pub operations_attempted: usize,
+    pub operations_accepted_by_api: usize,
+    pub target_found: bool,
+    pub target_focused: bool,
+    pub confirmed_heard: bool,
+    pub elapsed_us: u64,
+    pub error: Option<String>,
+}
+
+impl InputResult {
+    fn new(mode: InputMode, notes_attempted: usize) -> Self {
+        Self {
+            success: false,
+            mode,
+            notes_attempted,
+            notes_accepted_by_api: 0,
+            operations_attempted: 0,
+            operations_accepted_by_api: 0,
+            target_found: false,
+            target_focused: false,
+            confirmed_heard: false,
+            elapsed_us: 0,
+            error: None,
+        }
+    }
+
+    fn fail(mut self, message: impl Into<String>, started: Instant) -> Self {
+        self.error = Some(message.into());
+        self.elapsed_us = started.elapsed().as_micros() as u64;
+        self
+    }
+}
 
 use std::collections::HashMap;
 use std::sync::RwLock as StdRwLock;
@@ -175,6 +240,24 @@ pub fn set_modifier_delay(delay_ms: u64) {
 /// Get the current modifier delay
 pub fn get_modifier_delay() -> u64 {
     MODIFIER_DELAY_MS.load(Ordering::SeqCst)
+}
+
+pub fn set_input_timing(timing: InputTiming) {
+    MODIFIER_DELAY_MS.store(timing.modifier_lead_ms.min(100), Ordering::SeqCst);
+    TAP_DURATION_MS.store(timing.tap_ms.clamp(1, 250), Ordering::SeqCst);
+    MODIFIER_RELEASE_DELAY_MS.store(timing.modifier_release_ms.min(100), Ordering::SeqCst);
+}
+
+pub fn get_input_timing() -> InputTiming {
+    InputTiming::default()
+}
+
+pub fn current_input_mode() -> InputMode {
+    if get_send_input_mode() {
+        InputMode::SendInput
+    } else {
+        InputMode::PostMessage
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -488,7 +571,7 @@ const VK_CONTROL: u32 = 0x11;
 
 /// Key with optional modifier
 #[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Modifier {
     None,
     Shift,
@@ -601,11 +684,6 @@ fn modifier_to_vk(modifier: Modifier) -> Option<u32> {
     }
 }
 
-/// Reset modifier counts (no-op now, kept for compatibility)
-pub fn reset_modifier_counts() {
-    // No longer using reference counting
-}
-
 fn input_mode_label() -> String {
     if get_send_input_mode() {
         "SendInput".to_string()
@@ -614,215 +692,370 @@ fn input_mode_label() -> String {
     }
 }
 
-// ============ SendInput-based functions (for cloud gaming) ============
+// ============ SendInput-based functions (foreground fallback) ============
 
 #[cfg(target_os = "windows")]
-fn send_input_key_down(vk: u32) {
-    unsafe {
-        let scan_code = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) as u16;
-        let input = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(vk as u16),
-                    wScan: scan_code,
-                    dwFlags: KEYEVENTF_SCANCODE,
-                    time: 0,
-                    dwExtraInfo: 0,
+fn make_keyboard_input(vk: u32, key_up: bool) -> INPUT {
+    let scan_code = unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) as u16 };
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+            ki: KEYBDINPUT {
+                // KEYEVENTF_SCANCODE requires wVk to be zero; wScan is authoritative.
+                wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0),
+                wScan: scan_code,
+                dwFlags: if key_up {
+                    KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
+                } else {
+                    KEYEVENTF_SCANCODE
                 },
+                time: 0,
+                dwExtraInfo: 0,
             },
-        };
-        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+        },
     }
 }
 
 #[cfg(target_os = "windows")]
-fn send_input_key_up(vk: u32) {
-    unsafe {
-        let scan_code = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) as u16;
-        let input = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(vk as u16),
-                    wScan: scan_code,
-                    dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
-        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
-    }
+fn send_input_checked(inputs: &[INPUT]) -> usize {
+    unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) as usize }
 }
 
-/// Send modifier + key down in a single atomic SendInput call (instant, no delay)
-#[cfg(target_os = "windows")]
-fn send_input_combo_down(mod_vk: u32, key_vk: u32) {
-    unsafe {
-        let mod_scan = MapVirtualKeyW(mod_vk, MAPVK_VK_TO_VSC) as u16;
-        let key_scan = MapVirtualKeyW(key_vk, MAPVK_VK_TO_VSC) as u16;
-
-        let inputs = [
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(
-                            mod_vk as u16,
-                        ),
-                        wScan: mod_scan,
-                        dwFlags: KEYEVENTF_SCANCODE,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(
-                            key_vk as u16,
-                        ),
-                        wScan: key_scan,
-                        dwFlags: KEYEVENTF_SCANCODE,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-        ];
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-/// Send key up + modifier up in a single atomic SendInput call (instant, no delay)
-#[cfg(target_os = "windows")]
-fn send_input_combo_up(key_vk: u32, mod_vk: u32) {
-    unsafe {
-        let key_scan = MapVirtualKeyW(key_vk, MAPVK_VK_TO_VSC) as u16;
-        let mod_scan = MapVirtualKeyW(mod_vk, MAPVK_VK_TO_VSC) as u16;
-
-        let inputs = [
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(
-                            key_vk as u16,
-                        ),
-                        wScan: key_scan,
-                        dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(
-                            mod_vk as u16,
-                        ),
-                        wScan: mod_scan,
-                        dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-        ];
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-// ============ Key down/up with mode switching ============
+// ============ Checked key delivery ============
 
 #[cfg(target_os = "windows")]
-pub fn key_down(key: &str) {
-    if let Some((vk, modifier)) = parse_key(key) {
-        if USE_SEND_INPUT.load(Ordering::SeqCst) {
-            // SendInput mode - global keyboard simulation
-            // Only send if a game window is currently focused (prevent typing in Discord etc)
-            if !is_wwm_focused().unwrap_or(false) {
-                return;
-            }
-            // Use atomic combo for modifier keys (instant, no delay)
-            if let Some(mod_vk) = modifier_to_vk(modifier) {
-                send_input_combo_down(mod_vk, vk);
+fn send_vk(mode: InputMode, hwnd: Option<HWND>, vk: u32, key_up: bool) -> bool {
+    match mode {
+        InputMode::SendInput => send_input_checked(&[make_keyboard_input(vk, key_up)]) == 1,
+        InputMode::PostMessage => {
+            let Some(hwnd) = hwnd else {
+                return false;
+            };
+            let message = if key_up { WM_KEYUP } else { WM_KEYDOWN };
+            let lparam = if key_up {
+                make_keyup_lparam(vk)
             } else {
-                send_input_key_down(vk);
-            }
-        } else {
-            // PostMessage mode - targeted to game window
-            if let Some(hwnd) = find_game_window() {
-                unsafe {
-                    // Send modifier + key instantly (back-to-back, no delay)
-                    if let Some(mod_vk) = modifier_to_vk(modifier) {
-                        let mod_lparam = make_keydown_lparam(mod_vk);
-                        let key_lparam = make_keydown_lparam(vk);
-                        let _ = PostMessageW(hwnd, WM_KEYDOWN, WPARAM(mod_vk as usize), mod_lparam);
-                        let _ = PostMessageW(hwnd, WM_KEYDOWN, WPARAM(vk as usize), key_lparam);
-                    } else {
-                        let lparam = make_keydown_lparam(vk);
-                        let _ = PostMessageW(hwnd, WM_KEYDOWN, WPARAM(vk as usize), lparam);
-                    }
-                }
-            }
+                make_keydown_lparam(vk)
+            };
+            unsafe { PostMessageW(hwnd, message, WPARAM(vk as usize), lparam).is_ok() }
         }
     }
 }
 
 #[cfg(target_os = "windows")]
-pub fn key_up(key: &str) {
-    if let Some((vk, modifier)) = parse_key(key) {
-        if USE_SEND_INPUT.load(Ordering::SeqCst) {
-            // SendInput mode - global keyboard simulation
-            // Only send if a game window is currently focused (prevent typing in Discord etc)
-            if !is_wwm_focused().unwrap_or(false) {
-                return;
-            }
-            // Use atomic combo for modifier keys (instant, no delay)
-            if let Some(mod_vk) = modifier_to_vk(modifier) {
-                send_input_combo_up(vk, mod_vk);
-            } else {
-                send_input_key_up(vk);
-            }
-        } else {
-            // PostMessage mode - targeted to game window
-            if let Some(hwnd) = find_game_window() {
-                unsafe {
-                    // Release key + modifier instantly (back-to-back, no delay)
-                    if let Some(mod_vk) = modifier_to_vk(modifier) {
-                        let key_lparam = make_keyup_lparam(vk);
-                        let mod_lparam = make_keyup_lparam(mod_vk);
-                        let _ = PostMessageW(hwnd, WM_KEYUP, WPARAM(vk as usize), key_lparam);
-                        let _ = PostMessageW(hwnd, WM_KEYUP, WPARAM(mod_vk as usize), mod_lparam);
-                    } else {
-                        let lparam = make_keyup_lparam(vk);
-                        let _ = PostMessageW(hwnd, WM_KEYUP, WPARAM(vk as usize), lparam);
-                    }
-                }
-            }
+fn prepare_input_result(
+    notes_attempted: usize,
+    started: Instant,
+) -> Result<(InputResult, Option<HWND>), InputResult> {
+    let mode = current_input_mode();
+    let mut result = InputResult::new(mode, notes_attempted);
+    let hwnd = find_game_window();
+    result.target_found = hwnd.is_some();
+    result.target_focused = is_wwm_focused().unwrap_or(false);
+
+    if hwnd.is_none() {
+        return Err(result.fail(
+            "Where Winds Meet target window was not found; no input was sent.",
+            started,
+        ));
+    }
+    if mode == InputMode::SendInput && !result.target_focused {
+        return Err(result.fail(
+            "SendInput is foreground-only and Where Winds Meet is not focused; no input was sent.",
+            started,
+        ));
+    }
+
+    Ok((result, hwnd))
+}
+
+#[cfg(target_os = "windows")]
+fn record_operation(result: &mut InputResult, accepted: bool) {
+    result.operations_attempted += 1;
+    if accepted {
+        result.operations_accepted_by_api += 1;
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PlannedInputOperation {
+    Send {
+        vk: u32,
+        key_up: bool,
+        note_indices: Vec<usize>,
+    },
+    Delay(u64),
+}
+
+#[cfg(target_os = "windows")]
+trait InputSink {
+    fn send(&mut self, vk: u32, key_up: bool) -> bool;
+    fn delay(&mut self, milliseconds: u64);
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsInputSink {
+    mode: InputMode,
+    hwnd: Option<HWND>,
+}
+
+#[cfg(target_os = "windows")]
+impl InputSink for WindowsInputSink {
+    fn send(&mut self, vk: u32, key_up: bool) -> bool {
+        send_vk(self.mode, self.hwnd, vk, key_up)
+    }
+
+    fn delay(&mut self, milliseconds: u64) {
+        if milliseconds > 0 {
+            std::thread::sleep(Duration::from_millis(milliseconds));
         }
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn key_down(_key: &str) {
-    // Non-Windows: no-op for now
+#[cfg(target_os = "windows")]
+fn build_input_plan(
+    parsed: &[(usize, u32, Modifier)],
+    timing: InputTiming,
+) -> Vec<PlannedInputOperation> {
+    let mut operations = Vec::new();
+    for modifier in [Modifier::None, Modifier::Shift, Modifier::Ctrl] {
+        let group: Vec<(usize, u32)> = parsed
+            .iter()
+            .filter(|(_, _, candidate)| *candidate == modifier)
+            .map(|(index, vk, _)| (*index, *vk))
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        let note_indices = group.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+        if let Some(modifier_vk) = modifier_to_vk(modifier) {
+            operations.push(PlannedInputOperation::Send {
+                vk: modifier_vk,
+                key_up: false,
+                note_indices: note_indices.clone(),
+            });
+            operations.push(PlannedInputOperation::Delay(timing.modifier_lead_ms));
+        }
+        for (index, vk) in &group {
+            operations.push(PlannedInputOperation::Send {
+                vk: *vk,
+                key_up: false,
+                note_indices: vec![*index],
+            });
+        }
+        operations.push(PlannedInputOperation::Delay(timing.tap_ms.max(1)));
+        for (index, vk) in group.iter().rev() {
+            operations.push(PlannedInputOperation::Send {
+                vk: *vk,
+                key_up: true,
+                note_indices: vec![*index],
+            });
+        }
+        if let Some(modifier_vk) = modifier_to_vk(modifier) {
+            operations.push(PlannedInputOperation::Delay(timing.modifier_release_ms));
+            operations.push(PlannedInputOperation::Send {
+                vk: modifier_vk,
+                key_up: true,
+                note_indices,
+            });
+        }
+    }
+    operations
+}
+
+#[cfg(target_os = "windows")]
+fn execute_input_plan<S: InputSink>(
+    operations: &[PlannedInputOperation],
+    note_count: usize,
+    sink: &mut S,
+) -> (Vec<bool>, usize, usize) {
+    let mut accepted_notes = vec![true; note_count];
+    let mut attempted = 0;
+    let mut accepted = 0;
+    for operation in operations {
+        match operation {
+            PlannedInputOperation::Send {
+                vk,
+                key_up,
+                note_indices,
+            } => {
+                attempted += 1;
+                let operation_accepted = sink.send(*vk, *key_up);
+                if operation_accepted {
+                    accepted += 1;
+                } else {
+                    for index in note_indices {
+                        accepted_notes[*index] = false;
+                    }
+                }
+            }
+            PlannedInputOperation::Delay(milliseconds) => sink.delay(*milliseconds),
+        }
+    }
+    (accepted_notes, attempted, accepted)
+}
+
+#[cfg(target_os = "windows")]
+pub fn tap_chord(keys: &[String]) -> InputResult {
+    tap_chord_with_timing(keys, get_input_timing())
+}
+
+#[cfg(target_os = "windows")]
+pub fn tap_chord_with_timing(keys: &[String], timing: InputTiming) -> InputResult {
+    let started = Instant::now();
+    let parsed: Vec<(usize, u32, Modifier)> = keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| parse_key(key).map(|(vk, modifier)| (index, vk, modifier)))
+        .collect();
+
+    if parsed.len() != keys.len() {
+        return InputResult::new(current_input_mode(), keys.len()).fail(
+            "One or more mapped Konghou keys could not be converted to a Windows key code.",
+            started,
+        );
+    }
+
+    let (mut result, hwnd) = match prepare_input_result(keys.len(), started) {
+        Ok(prepared) => prepared,
+        Err(result) => return result,
+    };
+    let operations = build_input_plan(&parsed, timing);
+    let mut sink = WindowsInputSink {
+        mode: result.mode,
+        hwnd,
+    };
+    let (accepted_notes, attempted, accepted) =
+        execute_input_plan(&operations, keys.len(), &mut sink);
+    result.operations_attempted += attempted;
+    result.operations_accepted_by_api += accepted;
+
+    result.notes_accepted_by_api = accepted_notes.iter().filter(|accepted| **accepted).count();
+    result.success = result.notes_accepted_by_api == result.notes_attempted
+        && result.operations_accepted_by_api == result.operations_attempted;
+    if !result.success {
+        result.error = Some(format!(
+            "Windows accepted {}/{} input operations for {}/{} notes.",
+            result.operations_accepted_by_api,
+            result.operations_attempted,
+            result.notes_accepted_by_api,
+            result.notes_attempted
+        ));
+    }
+    result.elapsed_us = started.elapsed().as_micros() as u64;
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn transition_key(key: &str, key_up: bool) -> InputResult {
+    let started = Instant::now();
+    let Some((vk, modifier)) = parse_key(key) else {
+        return InputResult::new(current_input_mode(), 1)
+            .fail(format!("Unsupported mapped key: {key}"), started);
+    };
+    let (mut result, hwnd) = match prepare_input_result(1, started) {
+        Ok(prepared) => prepared,
+        Err(result) => return result,
+    };
+    let mut accepted = true;
+
+    if key_up {
+        let key_accepted = send_vk(result.mode, hwnd, vk, true);
+        record_operation(&mut result, key_accepted);
+        accepted &= key_accepted;
+        if let Some(mod_vk) = modifier_to_vk(modifier) {
+            let delay = MODIFIER_RELEASE_DELAY_MS.load(Ordering::SeqCst);
+            if delay > 0 {
+                std::thread::sleep(Duration::from_millis(delay));
+            }
+            let modifier_accepted = send_vk(result.mode, hwnd, mod_vk, true);
+            record_operation(&mut result, modifier_accepted);
+            accepted &= modifier_accepted;
+        }
+    } else {
+        if let Some(mod_vk) = modifier_to_vk(modifier) {
+            let modifier_accepted = send_vk(result.mode, hwnd, mod_vk, false);
+            record_operation(&mut result, modifier_accepted);
+            accepted &= modifier_accepted;
+            let delay = MODIFIER_DELAY_MS.load(Ordering::SeqCst);
+            if delay > 0 {
+                std::thread::sleep(Duration::from_millis(delay));
+            }
+        }
+        let key_accepted = send_vk(result.mode, hwnd, vk, false);
+        record_operation(&mut result, key_accepted);
+        accepted &= key_accepted;
+    }
+
+    result.notes_accepted_by_api = usize::from(accepted);
+    result.success = accepted;
+    if !accepted {
+        result.error = Some("Windows rejected one or more keyboard operations.".to_string());
+    }
+    result.elapsed_us = started.elapsed().as_micros() as u64;
+    result
+}
+
+#[cfg(target_os = "windows")]
+pub fn key_down(key: &str) -> InputResult {
+    transition_key(key, false)
+}
+
+#[cfg(target_os = "windows")]
+pub fn key_up(key: &str) -> InputResult {
+    transition_key(key, true)
+}
+
+#[cfg(target_os = "windows")]
+pub fn release_all_modifiers() -> InputResult {
+    let started = Instant::now();
+    let mode = current_input_mode();
+    let hwnd = find_game_window();
+    let mut result = InputResult::new(mode, 0);
+    result.target_found = hwnd.is_some();
+    result.target_focused = is_wwm_focused().unwrap_or(false);
+    if mode == InputMode::PostMessage && hwnd.is_none() {
+        return result.fail(
+            "Where Winds Meet target window was not found while releasing modifiers.",
+            started,
+        );
+    }
+    for modifier_vk in [VK_SHIFT, VK_CONTROL] {
+        let accepted = send_vk(result.mode, hwnd, modifier_vk, true);
+        record_operation(&mut result, accepted);
+    }
+    result.success = result.operations_accepted_by_api == result.operations_attempted;
+    result.elapsed_us = started.elapsed().as_micros() as u64;
+    result
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn key_up(_key: &str) {
-    // Non-Windows: no-op for now
+pub fn tap_chord(keys: &[String]) -> InputResult {
+    InputResult::new(current_input_mode(), keys.len()).fail(
+        "Keyboard delivery is only supported on Windows.",
+        Instant::now(),
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn reset_modifier_counts() {
-    // Non-Windows: no-op
+pub fn tap_chord_with_timing(keys: &[String], _timing: InputTiming) -> InputResult {
+    tap_chord(keys)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn key_down(_key: &str) -> InputResult {
+    tap_chord(&[])
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn key_up(_key: &str) -> InputResult {
+    tap_chord(&[])
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn release_all_modifiers() -> InputResult {
+    tap_chord(&[])
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -937,6 +1170,27 @@ pub fn is_wwm_focused() -> Result<bool, String> {
     }
 }
 
+pub fn prepare_target() -> Result<(), String> {
+    if !is_game_window_found() {
+        return Err(
+            "Where Winds Meet target window was not found. Open the game or configure its window keyword in Settings."
+                .to_string(),
+        );
+    }
+
+    if get_send_input_mode() {
+        focus_black_desert_window()?;
+        if !is_wwm_focused()? {
+            return Err(
+                "Where Winds Meet could not be focused for the foreground-only SendInput fallback."
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(not(target_os = "windows"))]
 pub fn is_wwm_focused() -> Result<bool, String> {
     // For non-Windows platforms, always return true for now
@@ -973,6 +1227,26 @@ pub fn focus_black_desert_window() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::match_target_metadata;
+
+    #[cfg(target_os = "windows")]
+    #[derive(Default)]
+    struct FakeInputSink {
+        sends: Vec<(u32, bool)>,
+        delays: Vec<u64>,
+        reject_vk: Option<u32>,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl super::InputSink for FakeInputSink {
+        fn send(&mut self, vk: u32, key_up: bool) -> bool {
+            self.sends.push((vk, key_up));
+            self.reject_vk != Some(vk)
+        }
+
+        fn delay(&mut self, milliseconds: u64) {
+            self.delays.push(milliseconds);
+        }
+    }
 
     #[test]
     fn where_winds_meet_title_matches() {
@@ -1027,5 +1301,64 @@ mod tests {
         ] {
             assert_eq!(match_target_metadata(title, None, None, &custom), None);
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fake_sink_observes_grouped_modifier_timing_and_cleanup() {
+        use super::{
+            build_input_plan, execute_input_plan, InputTiming, Modifier, VK_CONTROL, VK_SHIFT,
+        };
+
+        let parsed = [
+            (0, 0x41, Modifier::None),
+            (1, 0x5A, Modifier::Shift),
+            (2, 0x43, Modifier::Ctrl),
+        ];
+        let operations = build_input_plan(
+            &parsed,
+            InputTiming {
+                modifier_lead_ms: 3,
+                tap_ms: 11,
+                modifier_release_ms: 4,
+            },
+        );
+        let mut sink = FakeInputSink::default();
+        let (notes, attempted, accepted) = execute_input_plan(&operations, parsed.len(), &mut sink);
+
+        assert!(notes.iter().all(|accepted| *accepted));
+        assert_eq!(attempted, accepted);
+        assert_eq!(sink.delays, vec![11, 3, 11, 4, 3, 11, 4]);
+        assert!(sink.sends.contains(&(VK_SHIFT, false)));
+        assert!(sink.sends.contains(&(VK_SHIFT, true)));
+        assert!(sink.sends.contains(&(VK_CONTROL, false)));
+        assert_eq!(sink.sends.last(), Some(&(VK_CONTROL, true)));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fake_sink_failure_is_attributed_to_affected_note() {
+        use super::{build_input_plan, execute_input_plan, InputTiming, Modifier, VK_SHIFT};
+
+        let parsed = [(0, 0x41, Modifier::None), (1, 0x5A, Modifier::Shift)];
+        let operations = build_input_plan(&parsed, InputTiming::default());
+        let mut sink = FakeInputSink {
+            reject_vk: Some(VK_SHIFT),
+            ..Default::default()
+        };
+        let (notes, attempted, accepted) = execute_input_plan(&operations, parsed.len(), &mut sink);
+
+        assert!(notes[0]);
+        assert!(!notes[1]);
+        assert!(accepted < attempted);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn scan_code_input_does_not_mix_virtual_key_mode() {
+        let input = super::make_keyboard_input(0x41, false);
+        let keyboard = unsafe { input.Anonymous.ki };
+        assert_eq!(keyboard.wVk.0, 0);
+        assert_ne!(keyboard.wScan, 0);
     }
 }
