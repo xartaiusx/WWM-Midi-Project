@@ -15,17 +15,25 @@ export const currentFile = writable(null);
 export const loopMode = writable(false);
 export const shuffleMode = writable(false);
 
-// Note calculation mode (default: recommended project mapping)
-export const noteMode = writable("Python");
+// Authoritative WWM Konghou mapping.
+export const noteMode = writable("Exact");
 
 // Key mode (21 or 36 keys)
-export const keyMode = writable("Keys21");
+export const keyMode = writable("Keys36");
 
 // Modifier delay for sharps/flats in 36-key mode (ms)
 export const modifierDelay = writable(2);
 
 // Octave shift (-2 to +2)
 export const octaveShift = writable(0);
+
+// Explicit pitch controls for Konghou Exact 36.
+export const transposeSemitones = writable(0);
+export const octaveFit = writable(true);
+
+// Preflight and delivery truth from the backend.
+export const compatibilityReport = writable(null);
+export const playbackDiagnostics = writable(null);
 
 // Playback speed (0.25 to 2.0, default 1.0)
 export const speed = writable(1.0);
@@ -119,9 +127,26 @@ const STORAGE_KEYS = {
   NOTE_MODE: 'wwm-note-mode',
   KEY_MODE: 'wwm-key-mode',
   MODIFIER_DELAY: 'wwm-modifier-delay',
+  TRANSPOSE_SEMITONES: 'wwm-transpose-semitones',
+  OCTAVE_FIT: 'wwm-octave-fit',
   SPEED: 'wwm-speed',
   STATS: 'wwm-stats'
 };
+
+const LEGACY_36_NOTE_MODES = new Set([
+  'Python', 'Closest', 'Chromatic', 'TransposeOnly', 'Sharps',
+  'Quantize', 'Pentatonic', 'Raw', 'Wide'
+]);
+
+export function normalizeNoteModeForKeyMode(mode, selectedKeyMode) {
+  if (selectedKeyMode === 'Keys36' && (LEGACY_36_NOTE_MODES.has(mode) || !mode)) {
+    return 'Exact';
+  }
+  if (selectedKeyMode === 'Keys21' && mode === 'Exact') {
+    return 'Python';
+  }
+  return mode || (selectedKeyMode === 'Keys36' ? 'Exact' : 'Python');
+}
 
 // Stats store
 export const stats = writable({
@@ -251,21 +276,18 @@ export async function initializeStorage() {
       syncPlaylistsWithLibrary(currentFiles);
     }
 
-    // Load note mode from localStorage and sync with backend
-    const storedNoteMode = localStorage.getItem(STORAGE_KEYS.NOTE_MODE);
-    if (storedNoteMode) {
-      noteMode.set(storedNoteMode);
-      // Sync with backend
-      await invoke('set_note_mode', { mode: storedNoteMode });
-    }
+    // Load key mode first so legacy 36-key note modes migrate deterministically.
+    const storedKeyMode = localStorage.getItem(STORAGE_KEYS.KEY_MODE) || 'Keys36';
+    keyMode.set(storedKeyMode);
+    await invoke('set_key_mode', { mode: storedKeyMode });
 
-    // Load key mode from localStorage and sync with backend
-    const storedKeyMode = localStorage.getItem(STORAGE_KEYS.KEY_MODE);
-    if (storedKeyMode) {
-      keyMode.set(storedKeyMode);
-      // Sync with backend
-      await invoke('set_key_mode', { mode: storedKeyMode });
+    const originalNoteMode = localStorage.getItem(STORAGE_KEYS.NOTE_MODE);
+    const storedNoteMode = normalizeNoteModeForKeyMode(originalNoteMode, storedKeyMode);
+    if (storedNoteMode !== originalNoteMode) {
+      localStorage.setItem(STORAGE_KEYS.NOTE_MODE, storedNoteMode);
     }
+    noteMode.set(storedNoteMode);
+    await invoke('set_note_mode', { mode: storedNoteMode });
 
     // Load modifier delay from localStorage and sync with backend
     const storedModifierDelay = localStorage.getItem(STORAGE_KEYS.MODIFIER_DELAY);
@@ -274,6 +296,20 @@ export async function initializeStorage() {
       modifierDelay.set(delay);
       // Sync with backend
       await invoke('set_modifier_delay', { delay_ms: delay });
+    }
+
+    const storedTranspose = localStorage.getItem(STORAGE_KEYS.TRANSPOSE_SEMITONES);
+    if (storedTranspose !== null) {
+      const semitones = Math.max(-24, Math.min(24, parseInt(storedTranspose, 10) || 0));
+      transposeSemitones.set(semitones);
+      await invoke('set_transpose_semitones', { semitones });
+    }
+
+    const storedOctaveFit = localStorage.getItem(STORAGE_KEYS.OCTAVE_FIT);
+    if (storedOctaveFit !== null) {
+      const enabled = storedOctaveFit !== 'false';
+      octaveFit.set(enabled);
+      await invoke('set_octave_fit', { enabled });
     }
 
     // Load speed from localStorage and sync with backend
@@ -798,16 +834,71 @@ export async function loadTracksForFile(path) {
   }
 }
 
-// Set selected track for solo play (live update during playback)
+// Set selected track for solo play and rebuild the immutable playback plan at the current position.
 export async function setSelectedTrack(trackId) {
+  const shouldRestart = get(isPlaying);
+  const position = get(currentPosition);
   selectedTrackId.set(trackId);
-
-  // Update filter live in backend - takes effect immediately on next note
   await invoke('set_track_filter', { trackId });
+  if (shouldRestart) {
+    await invoke('seek', { position });
+  }
 }
 
 // Store for tracking missing files (by hash)
 export const missingFiles = writable(new Set());
+
+let preparedNextSelection = null;
+
+function selectLikelyNext(path) {
+  if (get(libraryPlayMode)) {
+    const files = get(midiFiles);
+    const position = get(libraryPlayIndex) + 1;
+    if (get(libraryPlayShuffle)) {
+      const order = get(libraryShuffleOrder);
+      const actualIndex = order[position] ?? (get(loopMode) ? order[0] : undefined);
+      return actualIndex === undefined ? null : { path: files[actualIndex]?.path, index: actualIndex };
+    }
+    const actualIndex = position < files.length ? position : (get(loopMode) ? 0 : -1);
+    return actualIndex < 0 ? null : { path: files[actualIndex]?.path, index: actualIndex };
+  }
+
+  const queue = get(playlist);
+  if (!queue.length) return null;
+  let current = queue.findIndex(file => file.path === path);
+  if (current < 0) current = get(currentIndex);
+  let next;
+  if (get(shuffleMode) && queue.length > 1) {
+    do {
+      next = Math.floor(Math.random() * queue.length);
+    } while (next === current);
+  } else if (queue.length > 1 || get(loopMode)) {
+    next = (current + 1) % queue.length;
+  } else {
+    return null;
+  }
+  return { path: queue[next]?.path, index: next };
+}
+
+async function preparseNextSelection(path) {
+  const selection = selectLikelyNext(path);
+  if (!selection?.path || selection.path === path && !get(loopMode)) {
+    preparedNextSelection = null;
+    return;
+  }
+
+  const pending = {
+    ...selection,
+    promise: invoke('prepare_midi', { path: selection.path })
+  };
+  preparedNextSelection = pending;
+  try {
+    pending.report = await pending.promise;
+  } catch (error) {
+    if (preparedNextSelection === pending) preparedNextSelection = null;
+    console.warn('Failed to preparse next MIDI:', error);
+  }
+}
 
 // Play a MIDI file
 export async function playMidi(path) {
@@ -833,7 +924,18 @@ export async function playMidi(path) {
     isPlaying.set(false);
     isPaused.set(false);
 
-    // Play - the backend will use the already-set track filter
+    // Build and expose the exact playback plan before input delivery begins.
+    const prepared = preparedNextSelection?.path === path ? preparedNextSelection : null;
+    const report = prepared
+      ? await prepared.promise
+      : await invoke('prepare_midi', { path });
+    if (prepared) preparedNextSelection = null;
+    compatibilityReport.set(report);
+    if (report && report.supported === false) {
+      throw new Error(`MIDI_INCOMPATIBLE: ${report.expected_quality || 'unsupported'}`);
+    }
+
+    // Play - the backend consumes the prepared MIDI and uses the selected track filter.
     await invoke('play_midi', { path });
 
     // Small delay to let backend initialize
@@ -855,6 +957,7 @@ export async function playMidi(path) {
     // Track stats
     const filename = path.split(/[\\/]/).pop() || path;
     trackSongPlay(filename);
+    void preparseNextSelection(path);
     logUiAction('playMidi', 'completed', actionContext);
   } catch (error) {
     console.error('Failed to play MIDI:', error);
@@ -878,6 +981,9 @@ export async function playMidiBand(file, options = {}) {
     currentPosition.set(0);
     isPlaying.set(false);
     isPaused.set(false);
+
+    const report = await invoke('prepare_midi', { path });
+    compatibilityReport.set(report);
 
     await invoke('play_midi_band', {
       path,
@@ -997,6 +1103,7 @@ export async function seekTo(position) {
 // Set note calculation mode (Default or Detailed)
 export async function setNoteMode(mode) {
   try {
+    mode = normalizeNoteModeForKeyMode(mode, get(keyMode));
     await invoke('set_note_mode', { mode });
     noteMode.set(mode);
     localStorage.setItem(STORAGE_KEYS.NOTE_MODE, mode);
@@ -1030,12 +1137,42 @@ export async function setKeyMode(mode) {
     await invoke('set_key_mode', { mode });
     keyMode.set(mode);
     localStorage.setItem(STORAGE_KEYS.KEY_MODE, mode);
+    if (mode === 'Keys36') {
+      noteMode.set('Exact');
+      localStorage.setItem(STORAGE_KEYS.NOTE_MODE, 'Exact');
+    } else if (get(noteMode) === 'Exact') {
+      await invoke('set_note_mode', { mode: 'Python' });
+      noteMode.set('Python');
+      localStorage.setItem(STORAGE_KEYS.NOTE_MODE, 'Python');
+    }
     console.log(`Key mode set to: ${mode}`);
     // Sync to band members if host
     const { broadcastSettings } = await import('./band.js');
     broadcastSettings();
   } catch (error) {
     console.error('Failed to set key mode:', error);
+  }
+}
+
+export async function setTransposeSemitones(value) {
+  const semitones = Math.max(-24, Math.min(24, Math.round(value || 0)));
+  transposeSemitones.set(semitones);
+  localStorage.setItem(STORAGE_KEYS.TRANSPOSE_SEMITONES, semitones.toString());
+  try {
+    await invoke('set_transpose_semitones', { semitones });
+  } catch (error) {
+    console.error('Failed to set explicit transpose:', error);
+  }
+}
+
+export async function setOctaveFit(enabled) {
+  const value = Boolean(enabled);
+  octaveFit.set(value);
+  localStorage.setItem(STORAGE_KEYS.OCTAVE_FIT, value.toString());
+  try {
+    await invoke('set_octave_fit', { enabled: value });
+  } catch (error) {
+    console.error('Failed to set octave fit:', error);
   }
 }
 
@@ -1237,7 +1374,13 @@ export async function playNext() {
   $currentIndex = Math.max(0, Math.min($currentIndex, $playlist.length - 1));
 
   let nextIndex;
-  if ($shuffleMode && $playlist.length > 1) {
+  if (
+    preparedNextSelection
+    && preparedNextSelection.path !== $currentFile
+    && $playlist[preparedNextSelection.index]?.path === preparedNextSelection.path
+  ) {
+    nextIndex = preparedNextSelection.index;
+  } else if ($shuffleMode && $playlist.length > 1) {
     // Pick a random index different from current
     do {
       nextIndex = Math.floor(Math.random() * $playlist.length);
@@ -1364,6 +1507,14 @@ export function initializeListeners() {
     }
   });
 
+  listen('compatibility-report', (event) => {
+    compatibilityReport.set(event.payload);
+  });
+
+  listen('playback-diagnostics', (event) => {
+    playbackDiagnostics.set(event.payload);
+  });
+
   // Check game focus periodically for smart pause
   setInterval(async () => {
     if (Date.now() < smartPauseCooldownUntil) {
@@ -1422,6 +1573,15 @@ async function refreshPlaybackState() {
     }
     if (state.octave_shift !== undefined) {
       octaveShift.set(state.octave_shift);
+    }
+    if (state.transpose_semitones !== undefined) {
+      transposeSemitones.set(state.transpose_semitones);
+    }
+    if (state.octave_fit !== undefined) {
+      octaveFit.set(state.octave_fit);
+    }
+    if (state.compatibility) {
+      compatibilityReport.set(state.compatibility);
     }
     if (state.speed !== undefined) {
       speed.set(state.speed);

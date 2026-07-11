@@ -28,7 +28,9 @@ import {
   addPlaytime,
   addToSavedPlaylist,
   clearAllFavorites,
+  compatibilityReport,
   createPlaylist,
+  currentFile,
   currentPosition,
   deletePlaylist,
   favorites,
@@ -36,7 +38,11 @@ import {
   isPaused,
   isPlaying,
   isFavorite,
+  keyMode,
+  noteMode,
+  normalizeNoteModeForKeyMode,
   pausePlayback,
+  playMidi,
   reorderPlaylists,
   reorderSavedPlaylist,
   removeDeletedFile,
@@ -44,6 +50,7 @@ import {
   savedPlaylists,
   setPlaylistsOrder,
   setPlaylistTracks,
+  setSelectedTrack,
   shuffleMode,
   stats,
   syncFavoritesWithLibrary,
@@ -75,6 +82,10 @@ describe('player store helpers', () => {
     isPlaying.set(false)
     isPaused.set(false)
     currentPosition.set(0)
+    currentFile.set(null)
+    compatibilityReport.set(null)
+    keyMode.set('Keys36')
+    noteMode.set('Exact')
     invoke.mockReset()
   })
 
@@ -107,6 +118,43 @@ describe('player store helpers', () => {
     expect(get(shuffleMode)).toBe(false)
   })
 
+  it('migrates every legacy 36-key transform to exact mapping', () => {
+    for (const mode of ['Python', 'Closest', 'Chromatic', 'TransposeOnly', 'Sharps']) {
+      expect(normalizeNoteModeForKeyMode(mode, 'Keys36')).toBe('Exact')
+    }
+    expect(normalizeNoteModeForKeyMode('Exact', 'Keys21')).toBe('Python')
+  })
+
+  it('preflights compatibility before starting input delivery', async () => {
+    const report = { supported: true, score: 92, expected_quality: 'excellent' }
+    invoke.mockImplementation(async command => {
+      if (command === 'prepare_midi') return report
+      if (command === 'get_playback_status') {
+        return {
+          is_playing: true,
+          is_paused: false,
+          loop_mode: false,
+          current_position: 0,
+          total_duration: 10,
+          current_file: 'C:\\Music\\Example.mid',
+          note_mode: 'Exact',
+          key_mode: 'Keys36',
+          transpose_semitones: 0,
+          octave_fit: true,
+          speed: 1,
+        }
+      }
+      return {}
+    })
+
+    await playMidi('C:\\Music\\Example.mid')
+
+    const commands = invoke.mock.calls.map(([command]) => command)
+    expect(commands.indexOf('prepare_midi')).toBeLessThan(commands.indexOf('play_midi'))
+    expect(get(compatibilityReport)).toEqual(report)
+    expect(get(currentFile)).toBe('C:\\Music\\Example.mid')
+  })
+
   it('pauses playback with an idempotent backend command', async () => {
     invoke.mockResolvedValueOnce({
       is_playing: true,
@@ -121,6 +169,19 @@ describe('player store helpers', () => {
     expect(get(isPlaying)).toBe(true)
     expect(get(isPaused)).toBe(true)
     expect(get(currentPosition)).toBe(12.5)
+  })
+
+  it('rebuilds the playback plan when a track is changed mid-song', async () => {
+    isPlaying.set(true)
+    currentPosition.set(12.5)
+    invoke.mockResolvedValue({})
+
+    await setSelectedTrack(2)
+
+    expect(invoke.mock.calls).toEqual([
+      ['set_track_filter', { trackId: 2 }],
+      ['seek', { position: 12.5 }],
+    ])
   })
 
   it('adds and removes favorites', () => {

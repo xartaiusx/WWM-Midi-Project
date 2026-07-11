@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU16, AtomicU8, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
-use tauri::Window;
+use tauri::{Emitter, Window};
 
-use crate::midi::{BandFilter, EventType, KeyMode, NoteMode};
+use crate::midi::{BandFilter, KeyMode, NoteMode};
 use crate::midi_input::MidiInputState;
 
 /// Note event for visualizer (simplified for frontend)
@@ -13,7 +12,7 @@ pub struct VisualizerNote {
     pub time_ms: u64,     // Start time in ms
     pub duration_ms: u64, // Duration in ms
     pub note: u8,         // MIDI note number
-    pub key_index: u8,    // Key index (0-20 for 21 keys)
+    pub key_index: u8,    // Key index (0-35 for Konghou Exact 36)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +26,10 @@ pub struct PlaybackState {
     pub note_mode: NoteMode,
     pub key_mode: KeyMode,
     pub octave_shift: i8,
+    pub transpose_semitones: i8,
+    pub octave_fit: bool,
     pub speed: f64,
+    pub compatibility: Option<crate::midi::CompatibilityReport>,
 }
 
 pub struct AppState {
@@ -37,12 +39,15 @@ pub struct AppState {
     note_mode: Arc<AtomicU8>,
     key_mode: Arc<AtomicU8>,
     octave_shift: Arc<AtomicI8>,
+    transpose_semitones: Arc<AtomicI8>,
+    octave_fit: Arc<AtomicBool>,
     speed: Arc<AtomicU16>, // Stored as speed * 100 (e.g., 100 = 1.0x, 50 = 0.5x)
     current_position: Arc<std::sync::Mutex<f64>>,
     total_duration: Arc<std::sync::Mutex<f64>>,
     current_file: Arc<std::sync::Mutex<Option<String>>>,
-    playback_start: Arc<std::sync::Mutex<Option<Instant>>>,
     midi_data: Arc<std::sync::Mutex<Option<crate::midi::MidiData>>>,
+    prepared_midi: Arc<std::sync::Mutex<Option<(String, crate::midi::MidiData)>>>,
+    compatibility: Arc<std::sync::Mutex<Option<crate::midi::CompatibilityReport>>>,
     seek_offset: Arc<std::sync::Mutex<f64>>,
     // Band mode filter
     band_filter: Arc<std::sync::Mutex<Option<BandFilter>>>,
@@ -58,15 +63,18 @@ impl AppState {
             is_playing: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
             loop_mode: Arc::new(AtomicBool::new(false)),
-            note_mode: Arc::new(AtomicU8::new(NoteMode::Python as u8)),
-            key_mode: Arc::new(AtomicU8::new(KeyMode::Keys21 as u8)),
+            note_mode: Arc::new(AtomicU8::new(NoteMode::Exact as u8)),
+            key_mode: Arc::new(AtomicU8::new(KeyMode::Keys36 as u8)),
             octave_shift: Arc::new(AtomicI8::new(0)),
+            transpose_semitones: Arc::new(AtomicI8::new(0)),
+            octave_fit: Arc::new(AtomicBool::new(true)),
             speed: Arc::new(AtomicU16::new(100)), // Default 1.0x speed
             current_position: Arc::new(std::sync::Mutex::new(0.0)),
             total_duration: Arc::new(std::sync::Mutex::new(0.0)),
             current_file: Arc::new(std::sync::Mutex::new(None)),
-            playback_start: Arc::new(std::sync::Mutex::new(None)),
             midi_data: Arc::new(std::sync::Mutex::new(None)),
+            prepared_midi: Arc::new(std::sync::Mutex::new(None)),
+            compatibility: Arc::new(std::sync::Mutex::new(None)),
             seek_offset: Arc::new(std::sync::Mutex::new(0.0)),
             band_filter: Arc::new(std::sync::Mutex::new(None)),
             // Live MIDI input
@@ -132,7 +140,15 @@ impl AppState {
     }
 
     pub fn load_midi(&mut self, path: &str) -> Result<(), String> {
-        let midi_data = crate::midi::load_midi(path)?;
+        let midi_data = self
+            .prepared_midi
+            .lock()
+            .unwrap()
+            .take()
+            .filter(|(prepared_path, _)| prepared_path == path)
+            .map(|(_, data)| data)
+            .map(Ok)
+            .unwrap_or_else(|| crate::midi::load_midi(path))?;
 
         *self.total_duration.lock().unwrap() = midi_data.duration;
         *self.current_file.lock().unwrap() = Some(path.to_string());
@@ -144,40 +160,66 @@ impl AppState {
         Ok(())
     }
 
+    pub fn prepare_midi(&mut self, path: &str) -> Result<crate::midi::CompatibilityReport, String> {
+        let midi_data = crate::midi::load_midi(path)?;
+        let plan = self.build_plan(&midi_data)?;
+        let report = plan.compatibility.clone();
+        *self.prepared_midi.lock().unwrap() = Some((path.to_string(), midi_data));
+        Ok(report)
+    }
+
+    fn build_plan(
+        &self,
+        midi_data: &crate::midi::MidiData,
+    ) -> Result<crate::midi::PlaybackPlan, String> {
+        let key_mode = self.get_key_mode();
+        let transpose = self.effective_playback_transpose(key_mode);
+        crate::midi::build_playback_plan(
+            midi_data,
+            transpose.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+            self.get_octave_fit(),
+            key_mode,
+            self.get_note_mode(),
+            self.band_filter.lock().unwrap().clone(),
+        )
+    }
+
+    fn effective_playback_transpose(&self, key_mode: KeyMode) -> i16 {
+        let explicit = self.get_transpose_semitones() as i16;
+        if key_mode == KeyMode::Keys21 {
+            explicit + self.get_octave_shift() as i16 * 12
+        } else {
+            explicit
+        }
+    }
+
     pub fn start_playback(&mut self, window: Window) -> Result<(), String> {
         if let Some(midi_data) = self.midi_data.lock().unwrap().clone() {
+            crate::keyboard::prepare_target()?;
+            let plan = self.build_plan(&midi_data)?;
+            *self.compatibility.lock().unwrap() = Some(plan.compatibility.clone());
+            let _ = window.emit("compatibility-report", &plan.compatibility);
             self.is_playing.store(true, Ordering::SeqCst);
             self.is_paused.store(false, Ordering::SeqCst);
             let offset = *self.seek_offset.lock().unwrap();
-            *self.playback_start.lock().unwrap() = Some(Instant::now());
             *self.current_position.lock().unwrap() = offset;
 
             // Clone Arc references for the thread
             let is_playing = Arc::clone(&self.is_playing);
             let is_paused = Arc::clone(&self.is_paused);
             let loop_mode = Arc::clone(&self.loop_mode);
-            let note_mode = Arc::clone(&self.note_mode);
-            let key_mode = Arc::clone(&self.key_mode);
-            let octave_shift = Arc::clone(&self.octave_shift);
             let speed = Arc::clone(&self.speed);
             let current_position = Arc::clone(&self.current_position);
             let seek_offset = Arc::clone(&self.seek_offset);
-            // Pass Arc reference for live track switching
-            let band_filter = Arc::clone(&self.band_filter);
-
             std::thread::spawn(move || {
                 crate::midi::play_midi(
-                    midi_data,
+                    plan,
                     is_playing,
                     is_paused,
                     loop_mode,
-                    note_mode,
-                    key_mode,
-                    octave_shift,
                     speed,
                     current_position,
                     seek_offset,
-                    band_filter,
                     window,
                 );
             });
@@ -195,6 +237,11 @@ impl AppState {
     }
 
     pub fn set_note_mode(&mut self, mode: NoteMode) {
+        let mode = if self.get_key_mode() == KeyMode::Keys36 {
+            NoteMode::Exact
+        } else {
+            mode
+        };
         self.note_mode.store(mode as u8, Ordering::SeqCst);
     }
 
@@ -204,6 +251,10 @@ impl AppState {
 
     pub fn set_key_mode(&mut self, mode: KeyMode) {
         self.key_mode.store(mode as u8, Ordering::SeqCst);
+        if mode == KeyMode::Keys36 {
+            self.note_mode
+                .store(NoteMode::Exact as u8, Ordering::SeqCst);
+        }
     }
 
     pub fn get_key_mode(&self) -> KeyMode {
@@ -218,6 +269,23 @@ impl AppState {
 
     pub fn get_octave_shift(&self) -> i8 {
         self.octave_shift.load(Ordering::SeqCst)
+    }
+
+    pub fn set_transpose_semitones(&mut self, semitones: i8) {
+        self.transpose_semitones
+            .store(semitones.clamp(-24, 24), Ordering::SeqCst);
+    }
+
+    pub fn get_transpose_semitones(&self) -> i8 {
+        self.transpose_semitones.load(Ordering::SeqCst)
+    }
+
+    pub fn set_octave_fit(&mut self, enabled: bool) {
+        self.octave_fit.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn get_octave_fit(&self) -> bool {
+        self.octave_fit.load(Ordering::SeqCst)
     }
 
     pub fn set_speed(&mut self, speed: f64) {
@@ -247,8 +315,6 @@ impl AppState {
         self.is_playing.store(false, Ordering::SeqCst);
         self.is_paused.store(false, Ordering::SeqCst);
         *self.current_position.lock().unwrap() = 0.0;
-        *self.playback_start.lock().unwrap() = None;
-
         // Wait for the playback thread to detect the stop flag and clean up
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -281,14 +347,7 @@ impl AppState {
     }
 
     pub fn get_playback_state(&self) -> PlaybackState {
-        let mut position = *self.current_position.lock().unwrap();
-
-        // Update position based on playback time if playing
-        if self.is_playing.load(Ordering::SeqCst) && !self.is_paused.load(Ordering::SeqCst) {
-            if let Some(start_time) = *self.playback_start.lock().unwrap() {
-                position = start_time.elapsed().as_secs_f64();
-            }
-        }
+        let position = *self.current_position.lock().unwrap();
 
         PlaybackState {
             is_playing: self.is_playing.load(Ordering::SeqCst),
@@ -300,31 +359,38 @@ impl AppState {
             note_mode: self.get_note_mode(),
             key_mode: self.get_key_mode(),
             octave_shift: self.get_octave_shift(),
+            transpose_semitones: self.get_transpose_semitones(),
+            octave_fit: self.get_octave_fit(),
             speed: self.get_speed(),
+            compatibility: self.compatibility.lock().unwrap().clone(),
         }
     }
 
-    /// Get note events for visualizer - only shows actual key presses (21 keys)
+    /// Get only the notes retained by the immutable playback plan.
     pub fn get_visualizer_notes(&self) -> Vec<VisualizerNote> {
         let midi_data = self.midi_data.lock().unwrap();
-        if midi_data.is_none() {
+        let Some(midi) = midi_data.as_ref() else {
             return Vec::new();
-        }
-
-        let midi = midi_data.as_ref().unwrap();
-        let transpose = midi.transpose;
+        };
+        let Ok(plan) = self.build_plan(midi) else {
+            return Vec::new();
+        };
+        let key_mode = self.get_key_mode();
+        let transpose = self.effective_playback_transpose(key_mode) as i32;
+        let exact_keys = (key_mode == KeyMode::Keys36).then(crate::instrument::exact_36_keys);
         let mut notes: Vec<VisualizerNote> = Vec::new();
 
-        // Only collect note_on events (game does instant tap, not hold)
-        // and map to the 21 game keys
-        for event in &midi.events {
-            if let EventType::NoteOn = event.event_type {
-                let key_index = Self::note_to_key_index(event.note as i32, transpose);
-
+        for chord in plan.events {
+            for (key, source_note) in chord.keys.iter().zip(&chord.source_notes) {
+                let key_index = exact_keys
+                    .as_ref()
+                    .and_then(|keys| keys.iter().position(|candidate| candidate == key))
+                    .map(|index| index as u8)
+                    .unwrap_or_else(|| Self::note_to_key_index(*source_note as i32, transpose));
                 notes.push(VisualizerNote {
-                    time_ms: event.time_ms,
+                    time_ms: chord.time_us / 1000,
                     duration_ms: 80, // Fixed short duration for tap visualization
-                    note: event.note,
+                    note: *source_note,
                     key_index,
                 });
             }
@@ -376,5 +442,42 @@ impl AppState {
             }
         }
         best_idx
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thirty_six_key_settings_migrate_to_exact() {
+        let mut state = AppState::new();
+        state.set_note_mode(NoteMode::Sharps);
+        assert_eq!(state.get_note_mode(), NoteMode::Exact);
+
+        state.set_key_mode(KeyMode::Keys21);
+        state.set_note_mode(NoteMode::Python);
+        assert_eq!(state.get_note_mode(), NoteMode::Python);
+
+        state.set_key_mode(KeyMode::Keys36);
+        assert_eq!(state.get_note_mode(), NoteMode::Exact);
+    }
+
+    #[test]
+    fn explicit_transpose_is_clamped_without_hidden_detection() {
+        let mut state = AppState::new();
+        state.set_transpose_semitones(100);
+        assert_eq!(state.get_transpose_semitones(), 24);
+        state.set_transpose_semitones(-100);
+        assert_eq!(state.get_transpose_semitones(), -24);
+    }
+
+    #[test]
+    fn legacy_octave_shift_cannot_change_exact_36_pitch() {
+        let mut state = AppState::new();
+        state.set_transpose_semitones(1);
+        state.set_octave_shift(2);
+        assert_eq!(state.effective_playback_transpose(KeyMode::Keys36), 1);
+        assert_eq!(state.effective_playback_transpose(KeyMode::Keys21), 25);
     }
 }
