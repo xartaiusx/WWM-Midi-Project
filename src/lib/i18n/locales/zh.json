@@ -150,7 +150,7 @@
       "browse": "浏览",
       "selecting": "选择中...",
       "reset": "重置",
-      "resetToDefault": "重置为默认 (./album)"
+      "resetToDefault": "重置为默认文件夹"
     },
     "about": {
       "title": "关于",

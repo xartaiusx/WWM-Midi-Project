@@ -3,10 +3,10 @@
 This project should have one active local working folder:
 
 ```text
-C:\Users\<you>\Documents\WWM-Midi-Project
+<repo-root>
 ```
 
-Use that folder for source edits, local toolchains, generated release builds, private MIDI tests, recordings, and runtime album content. Do not keep a second working clone with a similar name, because it becomes too easy to edit, build, or launch the wrong copy.
+Use that folder for source edits, local toolchains, generated release builds, private MIDI tests, recordings, and the ignored `Album/` library. Do not keep a second working clone with a similar name, because it becomes too easy to edit, build, or launch the wrong copy.
 
 ## What GitHub Restores
 
@@ -24,6 +24,7 @@ Generated folders and private runtime files are intentionally not committed:
 - `node_modules/`
 - `.dev-tools/`
 - `.temp/`
+- `Album/`
 - `dist/`
 - `src-tauri/target/`
 - local logs, diagnostics, generated MIDI, private recordings, and unapproved runtime album files
@@ -35,9 +36,8 @@ If a MIDI file or recording is personal, copyrighted, experimental, or does not 
 On a new Windows machine or after losing the local copy:
 
 ```powershell
-cd C:\Users\<you>\Documents
-git clone https://github.com/<your-github-username>/WWM-Midi-Project.git "WWM-Midi-Project"
-cd "WWM-Midi-Project"
+git clone https://github.com/<your-github-username>/WWM-Midi-Project.git "<repo-root>"
+cd "<repo-root>"
 .\scripts\dev.cmd bun install --frozen-lockfile
 .\scripts\setup-audio-midi.cmd
 .\scripts\audio-to-midi.cmd status
@@ -54,12 +54,14 @@ When Windows C++ build tools are available, also run:
 .\scripts\create-desktop-shortcut.cmd
 ```
 
+Git does not restore `Album/`. Restore that ignored folder from the separately verified local/cloud backup before launching the player.
+
 ## Save Current Work
 
 Before ending a development session:
 
 ```powershell
-cd "C:\Users\<you>\Documents\WWM-Midi-Project"
+cd "<repo-root>"
 git status --short --branch
 .\scripts\dev.cmd bun run test
 .\scripts\dev.cmd bun run build

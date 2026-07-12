@@ -4,7 +4,9 @@ All notable repository-facing changes are tracked here.
 
 ## Unreleased
 
-- No unreleased changes.
+- Moved the durable local music library to the ignored root `Album/` folder so Cargo cleanup cannot remove it.
+- Made local builds discover the repository album while preserving the executable-adjacent album default for packaged releases.
+- Removed obsolete Docker development files and unrelated system-diagnostics tooling from the public project tree.
 
 ## 1.2.0 - 2026-07-11
 

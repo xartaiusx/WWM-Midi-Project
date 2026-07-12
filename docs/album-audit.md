@@ -4,13 +4,13 @@
 
 ## Runtime Album Folder
 
-The default runtime album folder is local-only:
+The local development album folder is:
 
 ```text
-src-tauri/target/release/album
+<repo-root>/Album
 ```
 
-That folder is ignored by Git. It can contain private test songs, generated files, or local runtime content, but those files are not publishable until their source and status are recorded in the manifest.
+That folder is ignored by Git and intentionally lives outside Cargo's generated `target` tree. It can contain private test songs, generated files, or local runtime content, but those files are not publishable until their source and status are recorded in the manifest. Packaged releases use an `album` folder beside the executable unless a custom path is configured.
 
 ## Manifest Statuses
 

@@ -150,7 +150,7 @@
       "browse": "参照",
       "selecting": "選択中...",
       "reset": "リセット",
-      "resetToDefault": "デフォルトにリセット (./album)"
+      "resetToDefault": "デフォルトフォルダーにリセット"
     },
     "about": {
       "title": "について",

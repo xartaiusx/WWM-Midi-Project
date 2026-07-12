@@ -1,7 +1,7 @@
 {
   "$schema": "./docs/album-manifest.schema.json",
   "version": 1,
-  "albumDir": "src-tauri/target/release/album",
+  "albumDir": "Album",
   "allowedStatuses": [
     "approved-sourceable",
     "needs-user-source",

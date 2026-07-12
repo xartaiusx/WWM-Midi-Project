@@ -167,6 +167,21 @@ if ($missingRequiredPaths.Count -eq 0) {
 }
 
 try {
+    $trackedAlbumFiles = @(Invoke-Git ls-files -- "Album")
+    if ($trackedAlbumFiles.Count -eq 0) {
+        Write-Ok "local Album folder has no tracked files"
+    } else {
+        Write-Fail "local Album folder contains tracked files"
+        $trackedAlbumFiles | ForEach-Object { Write-Host "  $_" }
+    }
+
+    Invoke-Git check-ignore -q -- "Album/example.mid" | Out-Null
+    Write-Ok "local Album folder is covered by repository ignore rules"
+} catch {
+    Write-Fail "local Album folder is not safely ignored"
+}
+
+try {
     $ignored = @(Invoke-Git status --ignored --short)
     $ignoredEntries = @(
         $ignored |

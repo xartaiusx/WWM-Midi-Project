@@ -52,7 +52,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 // Global app handle for low-level hook callback
 static mut GLOBAL_APP_HANDLE: Option<AppHandle> = None;
 
-// Global album path (None = default to exe_dir/album)
+// Global album path (None = repository Album for local builds, exe_dir/album otherwise)
 use std::sync::RwLock;
 static ALBUM_PATH: RwLock<Option<String>> = RwLock::new(None);
 
@@ -399,6 +399,27 @@ fn get_locales_folder() -> Result<std::path::PathBuf, String> {
     Ok(exe_dir.join("locales"))
 }
 
+fn default_album_folder_for_executable(
+    exe_path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let exe_dir = exe_path
+        .parent()
+        .ok_or("Failed to get executable directory")?;
+
+    if let Some(repo_root) = exe_dir.ancestors().find(|candidate| {
+        candidate.join("package.json").is_file() && candidate.join("src-tauri").is_dir()
+    }) {
+        return Ok(repo_root.join("Album"));
+    }
+
+    Ok(exe_dir.join("album"))
+}
+
+fn get_default_album_folder() -> Result<std::path::PathBuf, String> {
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    default_album_folder_for_executable(&exe_path)
+}
+
 fn get_album_folder() -> Result<std::path::PathBuf, String> {
     // Check if custom path is set - return it even if it doesn't exist yet
     // (the caller will create it if needed)
@@ -408,12 +429,36 @@ fn get_album_folder() -> Result<std::path::PathBuf, String> {
         }
     }
 
-    // Default to exe_dir/album
-    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or("Failed to get executable directory")?;
-    Ok(exe_dir.join("album"))
+    get_default_album_folder()
+}
+
+#[cfg(test)]
+mod album_path_tests {
+    use super::default_album_folder_for_executable;
+
+    #[test]
+    fn local_build_uses_repository_album() {
+        let root = std::env::temp_dir().join(format!(
+            "wwm-midi-project-album-path-{}",
+            std::process::id()
+        ));
+        let exe_path = root.join("src-tauri/target/release/wwm-midi-project.exe");
+
+        std::fs::create_dir_all(exe_path.parent().expect("release directory")).unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+
+        let actual = default_album_folder_for_executable(&exe_path).unwrap();
+        assert_eq!(actual, root.join("Album"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn packaged_build_uses_album_beside_executable() {
+        let exe_path = std::path::PathBuf::from("install/bin/wwm-midi-project.exe");
+        let actual = default_album_folder_for_executable(&exe_path).unwrap();
+        assert_eq!(actual, std::path::PathBuf::from("install/bin/album"));
+    }
 }
 
 fn find_repo_root_for_audio_midi() -> Result<std::path::PathBuf, String> {
@@ -1772,12 +1817,7 @@ async fn reset_album_path() -> Result<String, String> {
         *guard = None;
     }
     save_album_path(None);
-    // Return the default path
-    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or("Failed to get executable directory")?;
-    Ok(exe_dir.join("album").to_string_lossy().to_string())
+    Ok(get_default_album_folder()?.to_string_lossy().to_string())
 }
 
 #[tauri::command]

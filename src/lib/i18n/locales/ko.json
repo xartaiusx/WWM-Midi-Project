@@ -150,7 +150,7 @@
       "browse": "찾아보기",
       "selecting": "선택 중...",
       "reset": "재설정",
-      "resetToDefault": "기본값으로 재설정 (./album)"
+      "resetToDefault": "기본 폴더로 재설정"
     },
     "about": {
       "title": "정보",

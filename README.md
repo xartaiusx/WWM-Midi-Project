@@ -40,6 +40,7 @@ The repository intentionally ignores generated and private runtime files:
 - `node_modules/`
 - `.dev-tools/`
 - `.temp/`
+- `Album/`
 - `dist/`
 - `src-tauri/target/`
 - generated `.mid` files
@@ -50,22 +51,22 @@ Keep copyrighted, personal, recorded, or experimental songs out of Git unless th
 The default runtime album folder is:
 
 ```text
-src-tauri/target/release/album
+<repo-root>/Album
 ```
 
-That folder is for local testing and release-time runtime content. It is not committed by default.
+That folder is the durable local music library. It is explicitly ignored by Git and kept outside Cargo's generated `target` tree so a build cleanup cannot remove it.
 
 Public releases do not include a curated MIDI song library. Keep an `album` folder next to the executable and add your own local `.mid` files with source/license tracking when files are intended for publication.
 
 ## Local Project Folder
 
-For a complete private working copy, keep the project folder at:
+Keep one active checkout and refer to its location as:
 
 ```text
-C:\Users\<you>\Documents\WWM-Midi-Project
+<repo-root>
 ```
 
-That local folder can include the repository, local toolchains, generated release builds, private MIDI files, recordings, and any local runtime album content needed to run the program.
+That folder contains the repository and the ignored `Album/` library. Avoid similarly named second clones, and keep private songs out of generated build folders and Git history.
 
 ## Setup
 
@@ -152,7 +153,7 @@ Generated conversion reports are saved beside the optimized MIDI when possible.
 ```text
 .
 |-- .github/                  CI and release workflows
-|-- Diagnostics/              Local diagnostic tooling
+|-- Album/                    Ignored local MIDI library
 |-- docs/                     Project, release, album, and maintenance notes
 |-- scripts/                  Windows setup, build, audit, shortcut, and helper scripts
 |-- src/                      Svelte frontend
