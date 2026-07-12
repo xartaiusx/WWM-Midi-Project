@@ -150,7 +150,7 @@
       "browse": "เรียกดู",
       "selecting": "กำลังเลือก...",
       "reset": "รีเซ็ต",
-      "resetToDefault": "รีเซ็ตเป็นค่าเริ่มต้น (./album)"
+      "resetToDefault": "รีเซ็ตเป็นโฟลเดอร์เริ่มต้น"
     },
     "about": {
       "title": "เกี่ยวกับ",

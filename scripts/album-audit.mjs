@@ -32,12 +32,12 @@ for (let i = 2; i < process.argv.length; i += 1) {
 
 const manifestPath = path.resolve(repoRoot, args.get("manifest") || "album-manifest.json");
 const manifest = readJson(manifestPath, {
-  albumDir: "src-tauri/target/release/album",
+  albumDir: "Album",
   allowExactDuplicateHashes: [],
   allowNormalizedDuplicates: [],
   entries: [],
 });
-const albumDir = path.resolve(repoRoot, args.get("album-dir") || manifest.albumDir || "src-tauri/target/release/album");
+const albumDir = path.resolve(repoRoot, args.get("album-dir") || manifest.albumDir || "Album");
 const entries = Array.isArray(manifest.entries) ? manifest.entries : [];
 const allowExact = new Set(manifest.allowExactDuplicateHashes || []);
 const allowNormalized = new Map(

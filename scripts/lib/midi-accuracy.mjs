@@ -6,8 +6,7 @@ import { parseMidi } from 'midi-file'
 export async function resolveAlbumDir(explicitPath) {
   const candidates = [
     explicitPath,
-    path.resolve('src-tauri/target/release/album'),
-    path.resolve('..', 'WWM-Midi-Project', 'src-tauri/target/release/album'),
+    path.resolve('Album'),
   ].filter(Boolean)
 
   for (const candidate of candidates) {

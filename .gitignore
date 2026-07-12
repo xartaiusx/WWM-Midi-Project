@@ -2,6 +2,8 @@
 node_modules
 .dev-tools
 
+# local music library and generated song files
+/Album/
 *.mid
 *.midi
 *.diff
@@ -14,7 +16,6 @@ target
 main.py
 src-tauri/target
 src-tauri/target/release
-src-tauri/target/release/album/
 
 # code coverage
 coverage

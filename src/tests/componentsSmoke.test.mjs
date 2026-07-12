@@ -1,28 +1,16 @@
 import path from 'node:path'
-import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { writeFile, mkdir, symlink } from 'node:fs/promises'
-import { rmSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import crypto from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
 const scriptPath = path.resolve('scripts/buildComponent.mjs')
 const testsDir = path.dirname(fileURLToPath(import.meta.url))
-const smokeBundlesDir = path.join(os.tmpdir(), 'wwm-midi-components-smoke')
-const smokeNodeModules = path.join(smokeBundlesDir, 'node_modules')
-const projectNodeModules = path.resolve('node_modules')
-const ensureBundlesDir = (async () => {
-  await mkdir(smokeBundlesDir, { recursive: true })
-  try {
-    await symlink(projectNodeModules, smokeNodeModules, 'junction')
-  } catch (error) {
-    if (error?.code !== 'EEXIST') throw error
-  }
-})()
-const tempFiles = new Set()
+const smokeRoot = path.resolve('.temp')
+let smokeBundlesDir
 const tauriStub = {
   invoke: async () => ({}),
   event: {
@@ -36,6 +24,15 @@ globalThis.__TAURI__ = globalThis.__TAURI__ ?? tauriStub
 if (typeof window !== 'undefined') {
   window.__TAURI__ = globalThis.__TAURI__
 }
+
+beforeAll(async () => {
+  await mkdir(smokeRoot, { recursive: true })
+  smokeBundlesDir = await mkdtemp(path.join(smokeRoot, 'components-smoke-'))
+})
+
+afterAll(async () => {
+  if (smokeBundlesDir) await rm(smokeBundlesDir, { recursive: true, force: true })
+})
 
 const components = [
   { label: 'src/App.svelte', path: '../App.svelte' },
@@ -81,9 +78,7 @@ function generateTempFileName(base) {
 }
 
 async function loadModuleFromCode(code) {
-  await ensureBundlesDir
   const modulePath = generateTempFileName('components-smoke')
-  tempFiles.add(modulePath)
   await writeFile(modulePath, code, 'utf8')
   const { stdout } = await execFileAsync('node', [
     '--input-type=module',
@@ -108,17 +103,3 @@ async function loadModuleFromCode(code) {
   ], { encoding: 'utf8' })
   return stdout.trim()
 }
-
-function cleanupTempFilesSync() {
-  if (tempFiles.size === 0) return
-  for (const file of tempFiles) {
-    try {
-      rmSync(file, { force: true })
-    } catch {
-      // ignore
-    }
-  }
-  tempFiles.clear()
-}
-
-process.on('exit', cleanupTempFilesSync)

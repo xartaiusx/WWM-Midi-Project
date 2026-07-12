@@ -39,7 +39,8 @@ For development:
 
 ## Album Rules
 
-- The default runtime album is `src-tauri\target\release\album`, which is ignored by Git.
+- The local development album is `<repo-root>\Album`, which is ignored by Git and must never be moved into Cargo's `target` tree.
+- Packaged releases still use an `album` folder beside the executable when no custom album path is configured.
 - `album-manifest.json` is the tracked audit contract. Use statuses: `approved-sourceable`, `needs-user-source`, `needs-license`, or `rejected`.
 - `album:audit` must pass before release. Exact duplicate hashes fail unless explicitly allowlisted. Normalized song duplicates fail unless explicitly allowlisted.
 - Public-domain/CC sources still need a source URL or source note in the manifest before they are considered fully approved.
