@@ -402,11 +402,10 @@ fn capture_loopback_inner(
 
     let bytes: Vec<u8> = bytes.into_iter().collect();
     let mut mono_samples = Vec::with_capacity(bytes.len() / (4 * CHANNELS));
-    for frame in bytes.chunks_exact(4 * CHANNELS) {
+    for frame in bytes.as_chunks::<{ 4 * CHANNELS }>().0 {
         let mut sum = 0.0f32;
-        for channel in 0..CHANNELS {
-            let start = channel * 4;
-            sum += f32::from_le_bytes(frame[start..start + 4].try_into().unwrap());
+        for channel in frame.as_chunks::<4>().0.iter().take(CHANNELS) {
+            sum += f32::from_le_bytes(*channel);
         }
         mono_samples.push(sum / CHANNELS as f32);
     }
